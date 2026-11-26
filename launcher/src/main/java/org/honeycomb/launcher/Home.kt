@@ -4,11 +4,17 @@ import org.honeycomb.launcher.design.*
 import org.honeycomb.launcher.design.Space
 
 import android.content.ComponentName
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -335,11 +341,107 @@ fun FavouritesScreen(
 ) {
     val byKey = remember(apps) { apps.associateBy { it.component.flattenToString() } }
     val view = androidx.compose.ui.platform.LocalView.current
-    var dragging by remember { mutableIntStateOf(-1) }
-    var drag by remember { mutableStateOf(Offset.Zero) }
-    var moved by remember { mutableStateOf(false) }
-    var hoverTarget by remember { mutableIntStateOf(-1) }
+    val density = LocalDensity.current
+    val px = density.density
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    var pressedKey by remember { mutableStateOf<String?>(null) }
+    var heldKey by remember { mutableStateOf<String?>(null) }
+    var draggedKey by remember { mutableStateOf<String?>(null) }
+    var dragCenterPx by remember { mutableStateOf(Offset.Zero) }
+    var hoverTargetSlot by remember { mutableIntStateOf(-1) }
+    var hoverSinceMs by remember { mutableLongStateOf(0L) }
+    var lastSwapMs by remember { mutableLongStateOf(0L) }
+    var lastSwapSlot by remember { mutableIntStateOf(-1) }
     var menuSlot by remember { mutableStateOf<Pair<Int, App>?>(null) }
+
+    val windowBounds = remember { androidx.compose.runtime.mutableStateMapOf<String, android.graphics.Rect>() }
+
+    val curPins by rememberUpdatedState(pins)
+    val curByKey by rememberUpdatedState(byKey)
+    val curEditing by rememberUpdatedState(editing)
+    val curOnOpen by rememberUpdatedState(onOpen)
+    val curOnPins by rememberUpdatedState(onPins)
+    val curOnEditing by rememberUpdatedState(onEditing)
+
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { DragOwners.activeDrag = false }
+    }
+
+    fun slotTopLeftPx(slot: Int): Offset {
+        val (x, y, d) = favouriteSlots[slot]
+        val left = if (x > FRAME_W / 2) FRAME_W.dp.value * px - d * px - (FRAME_W - x - d) * px else x * px
+        return Offset(left, y * px)
+    }
+
+    fun slotCenterPx(slot: Int): Offset {
+        val (_, _, d) = favouriteSlots[slot]
+        val tl = slotTopLeftPx(slot)
+        return Offset(tl.x + d * px / 2f, tl.y + d * px / 2f)
+    }
+
+    fun hitTestSlot(localPos: Offset): Int {
+        var best = -1
+        var bestDist = Float.MAX_VALUE
+        for (i in curPins.indices) {
+            val (_, _, d) = favouriteSlots.getOrNull(i) ?: continue
+            val c = slotCenterPx(i)
+            val dist = hypot(c.x - localPos.x, c.y - localPos.y)
+            if (dist <= d * px * 0.56f && dist < bestDist) {
+                bestDist = dist
+                best = i
+            }
+        }
+        return best
+    }
+
+    fun evaluateFavouriteSwap(activeKey: String, centerPx: Offset, forceImmediate: Boolean = false) {
+        val fromSlot = curPins.indexOf(activeKey)
+        if (fromSlot < 0) return
+        var best = -1
+        var bestDist = Float.MAX_VALUE
+        for (j in curPins.indices) {
+            if (j == fromSlot) continue
+            val (_, _, td) = favouriteSlots.getOrNull(j) ?: continue
+            val c = slotCenterPx(j)
+            val dist = hypot(c.x - centerPx.x, c.y - centerPx.y)
+            if (dist < td * px * 0.58f && dist < bestDist) {
+                bestDist = dist
+                best = j
+            }
+        }
+        if (best < 0) {
+            hoverTargetSlot = -1
+            hoverSinceMs = 0L
+            return
+        }
+        val (_, _, td) = favouriteSlots[best]
+        val now = android.os.SystemClock.uptimeMillis()
+        if (!forceImmediate && best == lastSwapSlot && (now - lastSwapMs) < 180L) return
+        if (forceImmediate || bestDist <= td * px * 0.36f) {
+            curOnPins(AppOrder.swap(curPins, fromSlot, best))
+            lastSwapMs = now
+            lastSwapSlot = fromSlot
+            hoverTargetSlot = -1
+            hoverSinceMs = 0L
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            return
+        }
+        if (hoverTargetSlot != best) {
+            hoverTargetSlot = best
+            hoverSinceMs = now
+        } else if (now - hoverSinceMs >= 65L) {
+            curOnPins(AppOrder.swap(curPins, fromSlot, best))
+            lastSwapMs = now
+            lastSwapSlot = fromSlot
+            hoverTargetSlot = -1
+            hoverSinceMs = 0L
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        }
+    }
+
+    val visualJiggle = editing || draggedKey != null
+
     androidx.activity.compose.BackHandler(enabled = menuSlot != null) { menuSlot = null }
     Backdrop(Modifier.testTag("favourites").semantics {
         customActions = listOf(CustomAccessibilityAction("All apps") { onAllApps(); true })
@@ -355,91 +457,190 @@ fun FavouritesScreen(
             }
         })
         // The ring spans 422 − 28 − 30.3 native watch pixels. Centre it rather than shifting the centre pin.
-        FillWidth(FAVOURITES_SPAN) { CentredFrame {
-        pins.forEachIndexed { i, key ->
-            val app = byKey[key] ?: return@forEachIndexed
-            val (x, y, d) = favouriteSlots.getOrNull(i) ?: return@forEachIndexed
-            val lifted = dragging == i
-            val angle = wiggle(editing && !lifted, i)
-            var bounds by remember { mutableStateOf(android.graphics.Rect()) }
-            val curApp by rememberUpdatedState(app)
-            val curEditing by rememberUpdatedState(editing)
-            val curBounds by rememberUpdatedState(bounds)
-            val curPins by rememberUpdatedState(pins)
-            val curOnOpen by rememberUpdatedState(onOpen)
-            val curOnPick by rememberUpdatedState(onPick)
-            val curOnPins by rememberUpdatedState(onPins)
-            val curOnEditing by rememberUpdatedState(onEditing)
-            AppDisc(app.icon, d, Modifier
-                .offset {
-                    // Mirror the rounded left edge: independently rounding both offsets can add a pixel before zoom.
-                    val left = if (x > FRAME_W / 2) FRAME_W.dp.roundToPx() - d.dp.roundToPx() -
-                        (FRAME_W - x - d).dp.roundToPx() else x.dp.roundToPx()
-                    IntOffset(left, y.dp.roundToPx())
-                }
-                .offset { if (lifted) IntOffset(drag.x.roundToInt(), drag.y.roundToInt()) else IntOffset.Zero }
-                .graphicsLayer { rotationZ = angle; val s = if (lifted) 1.12f else 1f; scaleX = s; scaleY = s }
-                .onGloballyPositioned { c ->
-                    // in the window, through FillWidth's zoom
-                    val r = c.boundsInWindow()
-                    bounds = android.graphics.Rect(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())
-                }
-                .testTag("pin-$i")
-                .semantics { contentDescription = app.label }
-                .pointerInput(key, i) {
-                    detectTapGestures { if (curEditing) curOnPick(i) else curOnOpen(curApp.component, curBounds) }
-                }
-                .pointerInput(key, i) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = {
-                            dragging = i; drag = Offset.Zero; moved = false; hoverTarget = -1
+        FillWidth(FAVOURITES_SPAN) {
+            CentredFrame(
+                modifier = Modifier.pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val hitSlot = hitTestSlot(down.position)
+                        if (hitSlot < 0) return@awaitEachGesture
+                        val hitKey = curPins.getOrNull(hitSlot) ?: return@awaitEachGesture
+                        val grabOffset = down.position - slotCenterPx(hitSlot)
+                        val slop = viewConfiguration.touchSlop
+
+                        try {
+                            if (curEditing) {
+                                // Explicit jiggle mode: instant zero-delay drag; tapping an icon NEVER jumps to Search!
+                                pressedKey = hitKey
+                                var total = Offset.Zero
+                                var started = false
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!ch.pressed) {
+                                        if (started) {
+                                            ch.consume()
+                                            evaluateFavouriteSwap(hitKey, dragCenterPx, forceImmediate = true)
+                                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                                        }
+                                        break
+                                    }
+                                    val delta = ch.positionChange()
+                                    total += delta
+                                    if (!started && hypot(total.x, total.y) > slop * 0.45f) {
+                                        started = true
+                                        DragOwners.activeDrag = true
+                                        pressedKey = null
+                                        draggedKey = hitKey
+                                        dragCenterPx = ch.position - grabOffset
+                                        view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                        ch.consume()
+                                    } else if (started) {
+                                        ch.consume()
+                                        dragCenterPx = ch.position - grabOffset
+                                        evaluateFavouriteSwap(hitKey, dragCenterPx)
+                                    }
+                                }
+                                return@awaitEachGesture
+                            }
+
+                            // Normal mode: crisp 2-stage Haptic Touch
+                            pressedKey = hitKey
+                            var cancelled = false
+                            var liftedEarly = false
+                            val endedBeforeHold = withTimeoutOrNull(280L) {
+                                var moved = Offset.Zero
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (ch.isConsumed) { cancelled = true; break }
+                                    moved += ch.positionChange()
+                                    if (hypot(moved.x, moved.y) > slop) { cancelled = true; break }
+                                    if (!ch.pressed) { liftedEarly = true; ch.consume(); break }
+                                }
+                                true
+                            }
+                            if (cancelled) return@awaitEachGesture
+                            if (liftedEarly && endedBeforeHold != null) {
+                                pressedKey = null
+                                curByKey[hitKey]?.let { app -> curOnOpen(app.component, windowBounds[hitKey]) }
+                                return@awaitEachGesture
+                            }
+
+                            // Stage 2: Haptic Pop! Lock out root navigation immediately.
+                            DragOwners.activeDrag = true
+                            pressedKey = null
+                            heldKey = hitKey
                             view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                        },
-                        onDrag = { c, delta ->
-                            c.consume()
-                            drag += delta
-                            if (hypot(drag.x, drag.y) > viewConfiguration.touchSlop * 1.2f) {
-                                if (!moved) {
-                                    moved = true
-                                    curOnEditing(true)
-                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+
+                            var dragAccum = Offset.Zero
+                            var startedDrag = false
+                            while (true) {
+                                val ev = awaitPointerEvent()
+                                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!ch.pressed) {
+                                    ch.consume()
+                                    if (startedDrag) {
+                                        evaluateFavouriteSwap(hitKey, dragCenterPx, forceImmediate = true)
+                                        view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                                    } else {
+                                        heldKey = null
+                                        val curSlot = curPins.indexOf(hitKey)
+                                        val app = curByKey[hitKey]
+                                        if (curSlot >= 0 && app != null) menuSlot = curSlot to app
+                                    }
+                                    break
                                 }
-                                val u = density
-                                val cx = x + d / 2 + drag.x / u; val cy = y + d / 2 + drag.y / u
-                                val target = favouriteSlots.indices.minByOrNull { j ->
-                                    val (sx, sy, sd) = favouriteSlots[j]; hypot(sx + sd / 2 - cx, sy + sd / 2 - cy)
-                                } ?: i
-                                val (tx, ty, td) = favouriteSlots[target]
-                                val nextHover = if (target != i && hypot(tx + td / 2 - cx, ty + td / 2 - cy) < td * 0.65f) target else -1
-                                if (nextHover != hoverTarget && nextHover >= 0) {
+                                val delta = ch.positionChange()
+                                ch.consume()
+                                dragAccum += delta
+                                if (!startedDrag && hypot(dragAccum.x, dragAccum.y) > slop * 0.75f) {
+                                    startedDrag = true
+                                    heldKey = null
+                                    draggedKey = hitKey
+                                    dragCenterPx = ch.position - grabOffset
                                     view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                } else if (startedDrag) {
+                                    dragCenterPx = ch.position - grabOffset
+                                    evaluateFavouriteSwap(hitKey, dragCenterPx)
                                 }
-                                hoverTarget = nextHover
                             }
-                        },
-                        onDragEnd = {
-                            if (!moved) {
-                                // Long-press without dragging: open quick actions ("Move to centre", "Rearrange", "Replace app", "Don't recommend")
-                                menuSlot = i to curApp
+                        } finally {
+                            DragOwners.activeDrag = false
+                            pressedKey = null
+                            heldKey = null
+                            if (draggedKey == hitKey) draggedKey = null
+                            hoverTargetSlot = -1
+                            hoverSinceMs = 0L
+                            lastSwapSlot = -1
+                        }
+                    }
+                },
+            ) {
+                pins.forEachIndexed { i, appKey ->
+                    val app = byKey[appKey] ?: return@forEachIndexed
+                    val (_, _, d) = favouriteSlots.getOrNull(i) ?: return@forEachIndexed
+                    androidx.compose.runtime.key(appKey) {
+                        val isDragged = draggedKey == appKey
+                        val isHeld = heldKey == appKey
+                        val isPressed = pressedKey == appKey
+                        val targetCenter = slotCenterPx(i)
+                        val animCenter = remember(appKey) {
+                            Animatable(targetCenter, Offset.VectorConverter)
+                        }
+                        val animD by animateFloatAsState(
+                            targetValue = d,
+                            animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
+                            label = "fav-d",
+                        )
+                        val scale by animateFloatAsState(
+                            targetValue = when {
+                                isDragged -> 1.16f
+                                isHeld -> 1.10f
+                                isPressed -> 0.92f
+                                else -> 1f
+                            },
+                            animationSpec = PICKUP_SCALE_SPRING,
+                            label = "fav-scale",
+                        )
+                        // Track finger 1:1 while dragged; spring smoothly to destination slot whenever released or displaced!
+                        LaunchedEffect(isDragged, dragCenterPx, targetCenter) {
+                            if (isDragged) {
+                                animCenter.snapTo(dragCenterPx)
                             } else {
-                                val u = density
-                                val cx = x + d / 2 + drag.x / u; val cy = y + d / 2 + drag.y / u
-                                val target = favouriteSlots.indices.minByOrNull { j ->
-                                    val (sx, sy, sd) = favouriteSlots[j]; hypot(sx + sd / 2 - cx, sy + sd / 2 - cy)
-                                } ?: i
-                                val (tx, ty, td) = favouriteSlots[target]
-                                if (target != i && hypot(tx + td / 2 - cx, ty + td / 2 - cy) < td * 0.65f) {
-                                    curOnPins(AppOrder.swap(curPins, i, target))
-                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
-                                }
+                                animCenter.animateTo(targetCenter, REORDER_OFFSET_SPRING)
                             }
-                            dragging = -1; drag = Offset.Zero; moved = false; hoverTarget = -1
-                        },
-                        onDragCancel = { dragging = -1; drag = Offset.Zero; moved = false; hoverTarget = -1 },
-                    )
-                })
+                        }
+                        val pose = rememberOrganicJiggle(visualJiggle && !isDragged, appKey.hashCode())
+                        val drawCenter = if (isDragged) dragCenterPx else animCenter.value
+                        val drawTopLeftX = drawCenter.x - animD * px / 2f
+                        val drawTopLeftY = drawCenter.y - animD * px / 2f
+                        AppDisc(
+                            app.icon,
+                            animD,
+                            Modifier
+                                .zIndex(if (isDragged) 20f else if (isHeld) 10f else 1f)
+                                .offset { IntOffset(drawTopLeftX.roundToInt(), drawTopLeftY.roundToInt()) }
+                                .graphicsLayer {
+                                    translationX = pose.txDp * px
+                                    translationY = pose.tyDp * px
+                                    rotationZ = pose.rotation
+                                    scaleX = scale
+                                    scaleY = scale
+                                }
+                                .onGloballyPositioned { c ->
+                                    val r = c.boundsInWindow()
+                                    windowBounds[appKey] = android.graphics.Rect(
+                                        r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt(),
+                                    )
+                                }
+                                .testTag("pin-$i")
+                                .semantics { contentDescription = app.label },
+                        )
+                    }
+                }
+            }
         }
-        } }
         if (editing && menuSlot == null) {
             CapsuleButton(
                 text = "Done",
@@ -456,7 +657,7 @@ fun FavouritesScreen(
                 minWidth = 112.dp,
             )
         }
-        if (!editing && menuSlot == null) {
+        if (!visualJiggle && menuSlot == null) {
             CapsuleButton(
                 text = "All Apps",
                 onClick = onAllApps,
@@ -789,6 +990,7 @@ fun AppGridScreen(
             WatchGrid(
                 icons = shown.map { it.icon },
                 labels = shown.map { it.label },
+                keys = shown.map { it.component.flattenToString() },
                 crownKeys = rowSteps,
                 onTap = { i, from -> onOpen(shown[i].component, from) },
                 onListView = onListView,

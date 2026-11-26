@@ -35,7 +35,8 @@ import kotlinx.coroutines.withContext
  * Smart Stack rising over the Face, and Notification / Control sheets pulled from the top edge.
  */
 class LauncherActivity : ComponentActivity() {
-    private var space by mutableStateOf(Space())
+    private var homeDepth by mutableStateOf(Depth.Favourites)
+    private var space by mutableStateOf(Space(depth = Depth.Favourites))
 
     /** A finger-tracked swipe in progress: which, and how far (px along it). */
     private var pull by mutableStateOf<Pair<Input, Float>?>(null)
@@ -61,7 +62,15 @@ class LauncherActivity : ComponentActivity() {
         launched = null
         val intent = intentFor(space, i)
         if (intent == Intent.Home || intent == Intent.Out) { editing = false; pickFor = null }
-        val next = reduce(space, intent)
+        val next = when {
+            // Pressing Home again while already on a non-Face Home (7-App Hub / Grid) lets you rest on the Watch Face;
+            // pressing Home again from Watch Face jumps straight back to your configured Home depth.
+            i == Input.HomeAgain && homeDepth != Depth.Face && !space.stack && space.edge == null && !space.picking && space.depth == homeDepth ->
+                Space(depth = Depth.Face, sheetEnd = space.sheetEnd)
+            i == Input.HomeAgain && homeDepth != Depth.Face && !space.stack && space.edge == null && !space.picking && space.depth == Depth.Face ->
+                Space(depth = homeDepth, sheetEnd = space.sheetEnd)
+            else -> reduce(space, intent, homeDepth)
+        }
         if (next.depth != space.depth) editing = false
         if (intent == Intent.Search) {
             searchFocusKey++
@@ -98,11 +107,14 @@ class LauncherActivity : ComponentActivity() {
             return
         }
         AppCache.start(this)
+        homeDepth = AppOrder.savedHomeStart(this).depth
         WindowCompat.setDecorFitsSystemWindows(window, false)
         launched = savedInstanceState?.getParcelable("launched", ComponentName::class.java)
         if (savedInstanceState != null && launched != null) {
-            val depth = savedInstanceState.getString("depth")?.let { runCatching { Depth.valueOf(it) }.getOrNull() } ?: Depth.Face
+            val depth = savedInstanceState.getString("depth")?.let { runCatching { Depth.valueOf(it) }.getOrNull() } ?: homeDepth
             space = Space(depth = depth)
+        } else {
+            space = Space(depth = homeDepth)
         }
         route(intent)
         WindowInsetsControllerCompat(window, window.decorView).apply {
@@ -149,12 +161,19 @@ class LauncherActivity : ComponentActivity() {
                     // watchOS List View is strictly alphabetical (A -> Z, '#' last) so the right-edge A-Z scrubber maps 1:1.
                     val alphabeticalOrder = remember(all) { alphabeticalApps(all).map { it.component.flattenToString() } }
                     var grid by remember { mutableStateOf(AppOrder.savedGrid(this, tall())) }
-                    var used by remember { mutableStateOf(emptyList<String>()) }
-                    LaunchedEffect(space.depth) {
-                        if (space.depth == Depth.Face) used = withContext(Dispatchers.IO) { usedPackages(this@LauncherActivity) }
+                    var ranking by remember { mutableStateOf(ContextualRanking(emptyList(), emptyMap())) }
+                    val resumeTick = FaceTick.resumes.value
+                    val notifTick by MediaListener.Defaults.posted.collectAsState()
+                    LaunchedEffect(space.depth, resumeTick, notifTick) {
+                        if (space.depth == Depth.Favourites || space.depth == Depth.Face || ranking.ordered.isEmpty()) {
+                            ranking = withContext(Dispatchers.IO) { contextualPackages(this@LauncherActivity) }
+                        }
                     }
-                    val shownPins = remember(pins, keys, used, hidden) {
-                        AppOrder.favourites(pins, keys, used, { labels[it].orEmpty() }, hidden)
+                    val used = ranking.ordered
+                    val prevShownRef = remember { arrayOf(emptyList<String>()) }
+                    val shownPins = remember(pins, keys, ranking, hidden) {
+                        AppOrder.favouritesStable(pins, keys, ranking, prevShownRef[0], { labels[it].orEmpty() }, hidden)
+                            .also { prevShownRef[0] = it }
                     }
                     fun savePins(next: List<String>) {
                         pins = AppOrder.pinned(pins, shownPins, next); AppOrder.savePins(this@LauncherActivity, pins)
@@ -383,6 +402,7 @@ class LauncherActivity : ComponentActivity() {
         super.onResume()
         FaceTick.resumes.value++
         if (!waitingForUnlock) {
+            homeDepth = AppOrder.savedHomeStart(this).depth
             runCatching { Widgets.host(this).startListening() }
             runCatching { Quiet.ensureMediaAllowed(this) }
             runCatching { AppUpdater.checkIfDue(this) }

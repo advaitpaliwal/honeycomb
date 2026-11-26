@@ -121,6 +121,8 @@ object Levels {
  */
 object DragOwners {
     private val areas = java.util.concurrent.ConcurrentHashMap<String, androidx.compose.ui.geometry.Rect>()
+    /** True while an icon hold/drag reorder owns the pointer stream, preventing root navigation gestures from hijacking it. */
+    @Volatile var activeDrag: Boolean = false
     fun owns(p: Offset) = areas.values.any { it.contains(p) }
     internal fun set(key: String, r: androidx.compose.ui.geometry.Rect?) { if (r == null) areas.remove(key) else areas[key] = r }
 }

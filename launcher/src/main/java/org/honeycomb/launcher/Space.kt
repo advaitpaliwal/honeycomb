@@ -121,10 +121,10 @@ val TABLE: List<Row> = listOf(
 
 fun intentFor(s: Space, input: Input): Intent = TABLE.firstOrNull { it.input == input && it.where(s) }?.intent ?: Intent.None
 
-/** What an intent does to the Space. */
-fun reduce(s: Space, intent: Intent): Space = when (intent) {
+/** What an intent does to the Space. [homeDepth] sets where System Home lands (default Watch Face for tests; configurable in Settings). */
+fun reduce(s: Space, intent: Intent, homeDepth: Depth = Depth.Face): Space = when (intent) {
     Intent.None -> s
-    Intent.Home -> Space(sheetEnd = s.sheetEnd)
+    Intent.Home -> Space(depth = homeDepth, sheetEnd = s.sheetEnd)
     Intent.In -> s.copy(depth = if (s.depth == Depth.Face) Depth.Favourites else Depth.Apps, searchedFromFace = false)
     Intent.Out -> if (s.depth == Depth.Apps && s.searchedFromFace) {
         s.copy(depth = Depth.Face, searchedFromFace = false)
@@ -209,6 +209,7 @@ fun Modifier.spaceInput(
     pointerInput(Unit) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            if (DragOwners.activeDrag) return@awaitEachGesture
             if (down.position.y >= size.height - systemBand) return@awaitEachGesture
             val s = read()
             val top = EdgeSwipe.nearTop(down.position.y, EdgeSwipe.EDGE_DP * realDp)
@@ -223,6 +224,7 @@ fun Modifier.spaceInput(
             while (true) {
                 val e = awaitPointerEvent(PointerEventPass.Initial)
                 val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                if (DragOwners.activeDrag) return@awaitEachGesture
                 tracker.addPosition(c.uptimeMillis, c.position)
                 d += c.positionChange()
                 if (taken == null && hypot(d.x, d.y) > viewConfiguration.touchSlop * 2f) {

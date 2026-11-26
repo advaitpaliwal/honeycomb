@@ -1128,6 +1128,9 @@ class HoneycombSettingsActivity : ComponentActivity() {
                     is UpdateState.Error -> Triple("Updates", s.message, false)
                 }
 
+                var homeStart by remember { mutableStateOf(AppOrder.savedHomeStart(this@HoneycombSettingsActivity)) }
+                val view = androidx.compose.ui.platform.LocalView.current
+
                 Column(
                     Modifier.fillMaxSize().background(HoneycombColors.background).safeDrawingPadding()
                         .padding(horizontal = 16.dp, vertical = 12.dp).testTag("honeycomb-settings"),
@@ -1135,10 +1138,25 @@ class HoneycombSettingsActivity : ComponentActivity() {
                 ) {
                     MinimalScreenHeader(title = "Settings", modifier = Modifier.padding(bottom = 12.dp))
                     NavSummaryRow(
+                        title = "Home screen",
+                        valueText = "${homeStart.label} · ${homeStart.subtitle}",
+                        index = 0,
+                        count = 5,
+                        glyph = Symbols.apps,
+                        onClick = {
+                            val modes = HomeStartMode.entries
+                            val next = modes[(modes.indexOf(homeStart) + 1) % modes.size]
+                            homeStart = next
+                            AppOrder.saveHomeStart(this@HoneycombSettingsActivity, next)
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                        },
+                        modifier = Modifier.testTag("settings-home-start"),
+                    )
+                    NavSummaryRow(
                         title = "Setup",
                         valueText = "Permissions & home app",
-                        index = 0,
-                        count = 4,
+                        index = 1,
+                        count = 5,
                         glyph = Symbols.apps,
                         onClick = { startActivity(setup) },
                         modifier = Modifier.testTag("settings-setup"),
@@ -1146,8 +1164,8 @@ class HoneycombSettingsActivity : ComponentActivity() {
                     NavSummaryRow(
                         title = "Block",
                         valueText = "Feeds, apps & websites",
-                        index = 1,
-                        count = 4,
+                        index = 2,
+                        count = 5,
                         glyph = Symbols.block,
                         onClick = { startActivity(Intent(this@HoneycombSettingsActivity, FeedsActivity::class.java)) },
                         modifier = Modifier.testTag("settings-feeds"),
@@ -1155,8 +1173,8 @@ class HoneycombSettingsActivity : ComponentActivity() {
                     NavSummaryRow(
                         title = "Keyboard",
                         valueText = "Input method settings",
-                        index = 2,
-                        count = 4,
+                        index = 3,
+                        count = 5,
                         glyph = Symbols.keyboard,
                         onClick = { HoneycombKeyboard.openSettingsOrPicker(this@HoneycombSettingsActivity) },
                         modifier = Modifier.testTag("settings-keyboard"),
@@ -1164,8 +1182,8 @@ class HoneycombSettingsActivity : ComponentActivity() {
                     NavSummaryRow(
                         title = updateTitle,
                         valueText = updateSubtitle,
-                        index = 3,
-                        count = 4,
+                        index = 4,
+                        count = 5,
                         glyph = Symbols.download,
                         accentActive = updateActive,
                         onClick = {
