@@ -62,6 +62,7 @@ class LauncherActivity : ComponentActivity() {
         val intent = intentFor(space, i)
         if (intent == Intent.Home || intent == Intent.Out) { editing = false; pickFor = null }
         val next = reduce(space, intent)
+        if (next.depth != space.depth) editing = false
         if (intent == Intent.Search) {
             searchFocusKey++
         } else if (next.depth != Depth.Apps || next.edge != null) {
@@ -174,6 +175,13 @@ class LauncherActivity : ComponentActivity() {
                         if (key in hidden) { hidden = hidden - key; AppOrder.saveHidden(this@LauncherActivity, hidden) }
                         order = listOf(key) + (gridOrder - key)
                         AppOrder.saveList(this@LauncherActivity, order)
+                    }
+                    fun moveGridApp(from: Int, to: Int) {
+                        val moved = AppOrder.move(gridOrder, from, to)
+                        if (moved != gridOrder) {
+                            order = moved
+                            AppOrder.saveList(this@LauncherActivity, order)
+                        }
                     }
                     fun dontRecommendGrid(key: String) {
                         hidden = hidden + key; AppOrder.saveHidden(this@LauncherActivity, hidden)
@@ -288,10 +296,13 @@ class LauncherActivity : ComponentActivity() {
                                         order = gridOrder,
                                         rowSteps = rowSteps,
                                         hidden = hidden,
+                                        editing = editing,
+                                        onEditing = { editing = it },
+                                        onMove = ::moveGridApp,
                                         onMoveToTop = ::moveToTop,
                                         onDontRecommend = ::dontRecommendGrid,
                                         onRecommend = ::recommend,
-                                        onListView = { view(false) },
+                                        onListView = { editing = false; view(false) },
                                         onOpen = ::open,
                                         searchFocusKey = searchFocusKey,
                                         onSearchFocused = { searchFocusKey = 0 },

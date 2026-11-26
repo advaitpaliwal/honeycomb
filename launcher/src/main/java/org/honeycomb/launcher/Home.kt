@@ -334,9 +334,11 @@ fun FavouritesScreen(
     onOpen: (ComponentName, android.graphics.Rect?) -> Unit,
 ) {
     val byKey = remember(apps) { apps.associateBy { it.component.flattenToString() } }
+    val view = androidx.compose.ui.platform.LocalView.current
     var dragging by remember { mutableIntStateOf(-1) }
     var drag by remember { mutableStateOf(Offset.Zero) }
     var moved by remember { mutableStateOf(false) }
+    var hoverTarget by remember { mutableIntStateOf(-1) }
     var menuSlot by remember { mutableStateOf<Pair<Int, App>?>(null) }
     androidx.activity.compose.BackHandler(enabled = menuSlot != null) { menuSlot = null }
     Backdrop(Modifier.testTag("favourites").semantics {
@@ -389,17 +391,35 @@ fun FavouritesScreen(
                 }
                 .pointerInput(key, i) {
                     detectDragGesturesAfterLongPress(
-                        onDragStart = { dragging = i; drag = Offset.Zero; moved = false },
+                        onDragStart = {
+                            dragging = i; drag = Offset.Zero; moved = false; hoverTarget = -1
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                        },
                         onDrag = { c, delta ->
                             c.consume()
                             drag += delta
-                            if (hypot(drag.x, drag.y) > viewConfiguration.touchSlop * 1.5f) {
-                                if (!moved) { moved = true; curOnEditing(true) }
+                            if (hypot(drag.x, drag.y) > viewConfiguration.touchSlop * 1.2f) {
+                                if (!moved) {
+                                    moved = true
+                                    curOnEditing(true)
+                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                }
+                                val u = density
+                                val cx = x + d / 2 + drag.x / u; val cy = y + d / 2 + drag.y / u
+                                val target = favouriteSlots.indices.minByOrNull { j ->
+                                    val (sx, sy, sd) = favouriteSlots[j]; hypot(sx + sd / 2 - cx, sy + sd / 2 - cy)
+                                } ?: i
+                                val (tx, ty, td) = favouriteSlots[target]
+                                val nextHover = if (target != i && hypot(tx + td / 2 - cx, ty + td / 2 - cy) < td * 0.65f) target else -1
+                                if (nextHover != hoverTarget && nextHover >= 0) {
+                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                }
+                                hoverTarget = nextHover
                             }
                         },
                         onDragEnd = {
                             if (!moved) {
-                                // Long-press without dragging: open quick actions ("Don't recommend", "Replace app", "Unpin")
+                                // Long-press without dragging: open quick actions ("Move to centre", "Rearrange", "Replace app", "Don't recommend")
                                 menuSlot = i to curApp
                             } else {
                                 val u = density
@@ -408,15 +428,34 @@ fun FavouritesScreen(
                                     val (sx, sy, sd) = favouriteSlots[j]; hypot(sx + sd / 2 - cx, sy + sd / 2 - cy)
                                 } ?: i
                                 val (tx, ty, td) = favouriteSlots[target]
-                                if (target != i && hypot(tx + td / 2 - cx, ty + td / 2 - cy) < td * 0.6f) curOnPins(AppOrder.swap(curPins, i, target))
+                                if (target != i && hypot(tx + td / 2 - cx, ty + td / 2 - cy) < td * 0.65f) {
+                                    curOnPins(AppOrder.swap(curPins, i, target))
+                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                                }
                             }
-                            dragging = -1; drag = Offset.Zero; moved = false
+                            dragging = -1; drag = Offset.Zero; moved = false; hoverTarget = -1
                         },
-                        onDragCancel = { dragging = -1; drag = Offset.Zero; moved = false },
+                        onDragCancel = { dragging = -1; drag = Offset.Zero; moved = false; hoverTarget = -1 },
                     )
                 })
         }
         } }
+        if (editing && menuSlot == null) {
+            CapsuleButton(
+                text = "Done",
+                onClick = {
+                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                    onEditing(false)
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = scrollBottomInset + 22.dp)
+                    .testTag("favourites-edit-done")
+                    .semantics { contentDescription = "Done editing" },
+                height = 40.dp,
+                minWidth = 112.dp,
+            )
+        }
         if (!editing && menuSlot == null) {
             CapsuleButton(
                 text = "All Apps",
@@ -435,10 +474,15 @@ fun FavouritesScreen(
             val key = app.component.flattenToString()
             val isPinned = savedPins.getOrNull(slot).orEmpty().isNotEmpty()
             val actions = buildList {
-                add(MenuAction("Don't recommend", Symbols.close, "menu-dont-recommend", destructive = true) {
-                    menuSlot = null; onEditing(false); onDontRecommend(slot, key)
+                if (slot != 0) {
+                    add(MenuAction("Move to centre", Symbols.arrowUp, "menu-move-centre") {
+                        menuSlot = null; onEditing(false); onPins(AppOrder.swap(pins, slot, 0))
+                    })
+                }
+                add(MenuAction("Rearrange icons", Symbols.apps, "menu-rearrange-favs") {
+                    menuSlot = null; onEditing(true)
                 })
-                add(MenuAction("Replace app", Symbols.apps, "menu-replace") {
+                add(MenuAction("Replace app", Symbols.list, "menu-replace") {
                     menuSlot = null; onEditing(false); onPick(slot)
                 })
                 if (isPinned) {
@@ -446,6 +490,9 @@ fun FavouritesScreen(
                         menuSlot = null; onEditing(false); onUnpin(slot)
                     })
                 }
+                add(MenuAction("Don't recommend", Symbols.close, "menu-dont-recommend", destructive = true) {
+                    menuSlot = null; onEditing(false); onDontRecommend(slot, key)
+                })
             }
             Box(
                 Modifier.fillMaxSize().background(HoneycombColors.sheetDim)
@@ -694,6 +741,9 @@ fun AppGridScreen(
     order: List<String>,
     rowSteps: Flow<Int>,
     hidden: Set<String> = emptySet(),
+    editing: Boolean = false,
+    onEditing: (Boolean) -> Unit = {},
+    onMove: (from: Int, to: Int) -> Unit = { _, _ -> },
     onMoveToTop: (String) -> Unit = {},
     onDontRecommend: (String) -> Unit = {},
     onRecommend: (String) -> Unit = {},
@@ -702,6 +752,7 @@ fun AppGridScreen(
     searchFocusKey: Int = 0,
     onSearchFocused: () -> Unit = {},
 ) {
+    val ctx = LocalContext.current
     val byKey = remember(apps) { apps.associateBy { it.component.flattenToString() } }
     val shown = remember(order, byKey) { order.mapNotNull { byKey[it] } }
     var menuApp by remember { mutableStateOf<App?>(null) }
@@ -743,6 +794,9 @@ fun AppGridScreen(
                 onListView = onListView,
                 topPadding = statusBarInset + 8.dp,
                 onLongPress = { i -> menuApp = shown.getOrNull(i) },
+                onMove = onMove,
+                editing = editing,
+                onEditing = onEditing,
                 header = searchHeader,
                 headerScrollKey = searchFocusKey,
                 overrideBody = if (trimmed.isEmpty()) null else {
@@ -775,8 +829,22 @@ fun AppGridScreen(
             val key = app.component.flattenToString()
             val isHidden = key in hidden
             val actions = buildList {
-                add(MenuAction("Move to top", Symbols.apps, "menu-move-top") {
-                    menuApp = null; onMoveToTop(key)
+                add(MenuAction("Move to top", Symbols.arrowUp, "menu-move-top") {
+                    menuApp = null; onEditing(false); onMoveToTop(key)
+                })
+                add(MenuAction(if (editing) "Done rearranging" else "Rearrange grid", Symbols.apps, "menu-rearrange-grid") {
+                    menuApp = null; onEditing(!editing)
+                })
+                add(MenuAction("App info", Symbols.list, "menu-app-info") {
+                    menuApp = null; onEditing(false)
+                    runCatching {
+                        ctx.startActivity(
+                            android.content.Intent(
+                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                android.net.Uri.fromParts("package", app.component.packageName, null),
+                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
                 })
                 if (isHidden) {
                     add(MenuAction("Recommend again", Symbols.back, "menu-recommend") {
