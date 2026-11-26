@@ -280,9 +280,11 @@ private fun StackedFace(ms: Long, p: FacePalette) = BoxWithConstraints(Modifier.
 private fun SplitFace(ms: Long, p: FacePalette) = BoxWithConstraints(Modifier.fillMaxSize()) {
     val s = safe()
     val (x, y, w, h) = s.px()
-    val (hour, minutes) = digits(ms, is24())
+    val (hour, minutes) = duoDigits(ms, is24())
     val face = watchDigits(LocalContext.current)
     val cap = remember(face) { capOf(face) }
+    val widest = remember(face) { (0..99).maxOf { digitRun(face, "%02d".format(Locale.ROOT, it)).ink.width() } }
+    val k = min(w / widest, (h / 2) / cap.height())
     val sec = (ms / 1000 % 60).toInt()
     // the rising colour steps up 1/60 of the screen each second in a short glide, as Flux's does (measured
     // real-faces/flux-motion/pts.json: each step done within one 100 ms sample); it drops back at the minute, and with
@@ -300,8 +302,8 @@ private fun SplitFace(ms: Long, p: FacePalette) = BoxWithConstraints(Modifier.fi
         drawRect(p.splitField)
         val line = size.height * (1f - rise.value)
         drawRect(p.rising, Offset(0f, line), Size(size.width, size.height - line))
-        // the hour fills the top half and the minutes the bottom, each as large as its half allows
-        val fits = rows.map { (r, rowTop) -> r to placeDigits(r.ink.left, r.ink.width(), cap.top, cap.height(), x, rowTop, w, h / 2) }
+        // the hour fills the top half and the minutes the bottom at one shared scale, keeping 2x2 poster balance
+        val fits = rows.map { (r, rowTop) -> r to placeDigits(r.ink.left, r.ink.width(), cap.top, cap.height(), x, rowTop, w, h / 2, k) }
         // a digit crossing the line takes each field's own ink there (PR #53's clip), so it reads on both
         clipRect(bottom = line) { fits.forEach { (r, f) -> drawDigits(r, f, p.ink) } }
         clipRect(top = line) { fits.forEach { (r, f) -> drawDigits(r, f, p.risingInk) } }
