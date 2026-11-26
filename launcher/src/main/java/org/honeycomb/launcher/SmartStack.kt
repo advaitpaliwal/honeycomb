@@ -139,12 +139,7 @@ fun widgetsBeforePile(h: List<Float>, room: Float): Int {
 }
 
 @Composable
-fun SmartStack(
-    onTop: (Boolean) -> Unit,
-    onOpenMedia: (String) -> Unit,
-    people: List<RecommendedPerson> = emptyList(),
-    onOpenPerson: (RecommendedPerson) -> Unit = {},
-) {
+fun SmartStack(onTop: (Boolean) -> Unit, onOpenMedia: (String) -> Unit) {
     val ctx = LocalContext.current
     var ms by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { ms = System.currentTimeMillis(); kotlinx.coroutines.delay(1000 - ms % 1000) } }
@@ -188,18 +183,7 @@ fun SmartStack(
             Column(Modifier.fillMaxSize().softTopScrollFade(clearTop = statusBarInset, feather = 12.dp).verticalScroll(scroll).padding(top = statusBarInset + StackTokens.top, bottom = scrollBottomInset).padding(horizontal = StackTokens.side), verticalArrangement = Arrangement.spacedBy(GAP.wp)) {
                 // Date and time header at the top of the Smart Stack, matching watchOS
                 DateClock(ms, Modifier.padding(bottom = StackTokens.clockGap - GAP.wp).testTag("stack-time"))
-                if (people.isNotEmpty()) {
-                    val byId = remember(people) { people.associateBy { it.id } }
-                    val chips = remember(people) { people.take(5).map { it.toChipData() } }
-                    Platter(Modifier.fillMaxWidth().testTag("stack-people"), padding = Space.m) {
-                        PeopleStrip(
-                            people = chips,
-                            onTap = { chip -> byId[chip.id]?.let(onOpenPerson) },
-                            showKicker = true,
-                        )
-                    }
-                }
-                if (items.size == 1 && people.isEmpty()) {
+                if (items.size == 1) {
                     // Nothing live, playing, or added yet: show a clean card instead of an empty void
                     Platter(Modifier.fillMaxWidth().testTag("stack-empty").pointerInput(Unit) { detectTapGestures { editing = true } }, padding = Space.l) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {

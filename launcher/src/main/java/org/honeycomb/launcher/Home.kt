@@ -675,31 +675,18 @@ fun FavouritesScreen(
             )
         }
         if (!visualJiggle && menuSlot == null) {
-            androidx.compose.foundation.layout.Row(
+            CapsuleButton(
+                text = "All Apps",
+                onClick = onAllApps,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = scrollBottomInset + 22.dp),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CapsuleButton(
-                    text = "All Apps",
-                    onClick = onAllApps,
-                    modifier = Modifier
-                        .testTag("all-apps-pill")
-                        .semantics { contentDescription = "All Apps" },
-                    icon = Symbols.apps,
-                    height = 40.dp,
-                    minWidth = 128.dp,
-                )
-                CircleButton(
-                    icon = Symbols.search,
-                    contentDescription = "Search apps and people",
-                    onClick = onSearch,
-                    modifier = Modifier.testTag("favourites-search"),
-                    size = 40.dp,
-                )
-            }
+                    .padding(bottom = scrollBottomInset + 22.dp)
+                    .testTag("all-apps-pill")
+                    .semantics { contentDescription = "All Apps" },
+                icon = Symbols.apps,
+                height = 40.dp,
+                minWidth = 136.dp,
+            )
         }
         menuSlot?.let { (slot, app) ->
             val key = app.component.flattenToString()
@@ -804,16 +791,6 @@ internal fun filterApps(apps: List<App>, query: String): List<App> {
  *   - Edge-to-edge scrolling all the way behind the translucent search pill and native top status-bar clock (no opaque top block).
  *   - Contacts-style right-edge A–Z fast-scroll scrubber with haptic ticks and floating section bubble.
  */
-internal fun RecommendedPerson.toChipData() = PersonChipData(
-    id = id,
-    name = name,
-    shortName = shortName,
-    appLabel = appLabel,
-    avatar = avatar,
-    appBadge = appBadge,
-    hasUnread = hasUnread,
-)
-
 @Composable
 fun AppListScreen(
     apps: List<App>,
@@ -829,8 +806,6 @@ fun AppListScreen(
     retainScroll: () -> Boolean = { false },
     searchFocusKey: Int = 0,
     onSearchFocused: () -> Unit = {},
-    people: List<RecommendedPerson> = emptyList(),
-    onOpenPerson: (RecommendedPerson) -> Unit = {},
 ) {
     val sortedApps = remember(apps) { alphabeticalApps(apps) }
     // Preserve the viewport if Android reclaims Home behind an app. A fresh list still starts at its top.
@@ -844,17 +819,9 @@ fun AppListScreen(
     var query by remember { mutableStateOf("") }
     val trimmed = query.trim()
     val visible = remember(trimmed, sortedApps) { filterApps(sortedApps, trimmed) }
-    val matchingPeople = remember(trimmed, people, pickFor) {
-        if (pickFor != null || trimmed.isEmpty()) emptyList() else filterPeople(people, trimmed).take(5)
-    }
-    val peopleById = remember(people) { people.associateBy { it.id } }
-    val topChips = remember(people, pickFor) {
-        if (pickFor != null) emptyList() else people.take(5).map { it.toChipData() }
-    }
-    val headerCount = 1 + if (trimmed.isEmpty() && topChips.isNotEmpty()) 1 else 0
     val availableLetters = remember(sortedApps) { sortedApps.map { sectionLetter(it.label) }.toSet() }
-    val activeLetter = remember(state.firstVisibleItemIndex, visible, headerCount) {
-        visible.getOrNull((state.firstVisibleItemIndex - headerCount).coerceAtLeast(0))?.let { sectionLetter(it.label) }
+    val activeLetter = remember(state.firstVisibleItemIndex, visible) {
+        visible.getOrNull((state.firstVisibleItemIndex - 1).coerceAtLeast(0))?.let { sectionLetter(it.label) }
     }
     val px = LocalDensity.current.density
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
@@ -888,46 +855,18 @@ fun AppListScreen(
                         query = query,
                         onQueryChange = { query = it },
                         onSubmit = {
-                            if (visible.isNotEmpty()) {
-                                val app = visible.first()
+                            visible.firstOrNull()?.let { app ->
                                 val key = app.component.flattenToString()
                                 query = ""
                                 if (pickFor != null) onPicked(key) else onOpen(app.component, null)
-                            } else if (matchingPeople.isNotEmpty()) {
-                                val p = matchingPeople.first()
-                                query = ""
-                                onOpenPerson(p)
                             }
                         },
                         focusKey = searchFocusKey,
                         onFocused = onSearchFocused,
-                        placeholder = if (pickFor != null) "Search apps" else "Search apps & people",
                         modifier = Modifier
                             .padding(horizontal = 4.dp, vertical = 6.dp)
                             .testTag("app-search"),
                     )
-                }
-                if (trimmed.isEmpty() && topChips.isNotEmpty()) {
-                    item(key = "people-strip") {
-                        PeopleStrip(
-                            people = topChips,
-                            onTap = { chip -> peopleById[chip.id]?.let(onOpenPerson) },
-                            showKicker = true,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                        )
-                    }
-                }
-                if (matchingPeople.isNotEmpty()) {
-                    itemsIndexed(matchingPeople, key = { _, p -> "person-${p.id}" }) { _, person ->
-                        PersonSearchRow(
-                            person = person.toChipData(),
-                            onClick = {
-                                query = ""
-                                onOpenPerson(person)
-                            },
-                            modifier = Modifier.testTag("search-person-${person.id}"),
-                        )
-                    }
                 }
                 itemsIndexed(visible, key = { _, a -> a.component.flattenToString() }) { _, app ->
                     val key = app.component.flattenToString()
@@ -969,10 +908,10 @@ fun AppListScreen(
                         )
                     }
                 }
-                if (visible.isEmpty() && matchingPeople.isEmpty() && trimmed.isNotEmpty()) {
+                if (visible.isEmpty() && trimmed.isNotEmpty()) {
                     item(key = "no-matches") {
                         SettingsNote(
-                            "No matches for \"$trimmed\"",
+                            "No apps matching \"$trimmed\"",
                             Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
                         )
                     }
@@ -993,7 +932,7 @@ fun AppListScreen(
                     availableLetters = availableLetters,
                     onScrubLetter = { letter ->
                         firstIndexForSection(visible, letter)?.let { targetIdx ->
-                            scope.launch { state.scrollToItem(targetIdx + headerCount) }
+                            scope.launch { state.scrollToItem(targetIdx + 1) }
                         }
                     },
                     modifier = Modifier
@@ -1030,8 +969,6 @@ fun AppGridScreen(
     onOpen: (ComponentName, android.graphics.Rect?) -> Unit,
     searchFocusKey: Int = 0,
     onSearchFocused: () -> Unit = {},
-    people: List<RecommendedPerson> = emptyList(),
-    onOpenPerson: (RecommendedPerson) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val byKey = remember(apps) { apps.associateBy { it.component.flattenToString() } }
@@ -1042,45 +979,24 @@ fun AppGridScreen(
     val matches = remember(trimmed, shown) {
         if (trimmed.isEmpty()) emptyList() else filterApps(shown, trimmed)
     }
-    val matchingPeople = remember(trimmed, people) {
-        if (trimmed.isEmpty()) emptyList() else filterPeople(people, trimmed).take(5)
-    }
-    val peopleById = remember(people) { people.associateBy { it.id } }
-    val topChips = remember(people) { people.take(5).map { it.toChipData() } }
     androidx.activity.compose.BackHandler(enabled = menuApp != null) { menuApp = null }
     androidx.activity.compose.BackHandler(enabled = menuApp == null && query.isNotEmpty()) { query = "" }
     val searchHeader: @Composable () -> Unit = {
-        androidx.compose.foundation.layout.Column(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 10.dp),
-            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
-        ) {
-            AppSearchBar(
-                query = query,
-                onQueryChange = { query = it },
-                onSubmit = {
-                    if (matches.isNotEmpty()) {
-                        val app = matches.first()
-                        query = ""
-                        onOpen(app.component, null)
-                    } else if (matchingPeople.isNotEmpty()) {
-                        val p = matchingPeople.first()
-                        query = ""
-                        onOpenPerson(p)
-                    }
-                },
-                focusKey = searchFocusKey,
-                onFocused = onSearchFocused,
-                placeholder = "Search apps & people",
-                modifier = Modifier.testTag("app-search"),
-            )
-            if (trimmed.isEmpty() && topChips.isNotEmpty()) {
-                PeopleStrip(
-                    people = topChips,
-                    onTap = { chip -> peopleById[chip.id]?.let(onOpenPerson) },
-                    modifier = Modifier.testTag("grid-people-strip"),
-                )
-            }
-        }
+        AppSearchBar(
+            query = query,
+            onQueryChange = { query = it },
+            onSubmit = {
+                matches.firstOrNull()?.let { app ->
+                    query = ""
+                    onOpen(app.component, null)
+                }
+            },
+            focusKey = searchFocusKey,
+            onFocused = onSearchFocused,
+            modifier = Modifier
+                .padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 12.dp)
+                .testTag("app-search"),
+        )
     }
     Backdrop(Modifier.testTag("app-grid")) {
         if (shown.isEmpty()) return@Backdrop
@@ -1104,18 +1020,6 @@ fun AppGridScreen(
                 headerScrollKey = searchFocusKey,
                 overrideBody = if (trimmed.isEmpty()) null else {
                     {
-                        if (matchingPeople.isNotEmpty()) {
-                            itemsIndexed(matchingPeople, key = { _, p -> "person-${p.id}" }) { _, person ->
-                                PersonSearchRow(
-                                    person = person.toChipData(),
-                                    onClick = {
-                                        query = ""
-                                        onOpenPerson(person)
-                                    },
-                                    modifier = Modifier.padding(horizontal = 20.dp).testTag("search-person-${person.id}"),
-                                )
-                            }
-                        }
                         itemsIndexed(matches, key = { _, a -> a.component.flattenToString() }) { _, app ->
                             AppSearchRow(
                                 label = app.label,
@@ -1127,10 +1031,10 @@ fun AppGridScreen(
                                 modifier = Modifier.padding(horizontal = 20.dp).testTag("search-hit-${app.component.flattenToString()}"),
                             )
                         }
-                        if (matches.isEmpty() && matchingPeople.isEmpty()) {
+                        if (matches.isEmpty()) {
                             item(key = "no-matches") {
                                 SettingsNote(
-                                    "No matches for \"$trimmed\"",
+                                    "No apps matching \"$trimmed\"",
                                     Modifier.padding(horizontal = 32.dp, vertical = 16.dp),
                                 )
                             }

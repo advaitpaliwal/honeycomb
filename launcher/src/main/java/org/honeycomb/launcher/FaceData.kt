@@ -25,10 +25,7 @@ fun isInternal(pkg: String): Boolean = pkg.startsWith("org.honeycomb.")
 class MediaListener : NotificationListenerService() {
     override fun onListenerConnected() { Defaults.live = this; Defaults.changes.value++ }
     override fun onListenerDisconnected() { if (Defaults.live === this) Defaults.live = null; Defaults.changes.value++ }
-    override fun onNotificationPosted(sbn: android.service.notification.StatusBarNotification?) {
-        sbn?.let { runCatching { RecommendedPeople.recordNotification(applicationContext, it) } }
-        Defaults.posted.value++
-    }
+    override fun onNotificationPosted(sbn: android.service.notification.StatusBarNotification?) { Defaults.posted.value++ }
     override fun onNotificationRemoved(sbn: android.service.notification.StatusBarNotification?) { Defaults.posted.value++ }
 
     object Defaults {
