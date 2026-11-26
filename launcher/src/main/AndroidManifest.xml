@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- the app grid lists every launchable app -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+    <!-- the dynamic grid's most-used apps (UsageStatsManager), when the owner grants usage access -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <!-- Control Centre: Quiet sets Do Not Disturb (notification-policy access); the tiles read Wi-Fi and Bluetooth -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Control Centre's brightness slider writes Settings.System.SCREEN_BRIGHTNESS, once granted in setup (ACTION_MANAGE_WRITE_SETTINGS) -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
+    <application
+        android:allowBackup="false"
+        android:label="Honeycomb"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/Home">
+        <!-- lets Macrobenchmark and Perfetto read frame timing from a release build (developer.android.com/guide/topics/manifest/profileable-element) -->
+        <profileable android:shell="true" />
+        <!-- HOME: replaces Android's launcher (RoleManager.ROLE_HOME). -->
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:clearTaskOnLaunch="true"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustNothing">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Wallpaper & style finds the home app's Themed icons provider here (IconTheme.kt) -->
+            <meta-data
+                android:name="com.android.launcher3.themedicon.option"
+                android:value="${applicationId}.grid_control" />
+        </activity>
+        <provider
+            android:name=".IconThemeProvider"
+            android:authorities="${applicationId}.grid_control"
+            android:exported="true" />
+        <!-- First-run setup (Setup.kt): one role or permission per screen; "Run setup again" in Honeycomb's settings entry
+             (HoneycombSettingsActivity) opens it again. -->
+        <activity
+            android:name=".SetupActivity"
+            android:exported="false"
+            android:label="Honeycomb setup"
+            android:theme="@style/Home"
+            android:screenOrientation="portrait"
+            android:excludeFromRecents="true"
+            android:taskAffinity="org.honeycomb.launcher.setup" />
+        <!-- Now Playing, Notification Centre and Live Updates share this listener. -->
+        <service
+            android:name=".MediaListener"
+            android:exported="true"
+            android:label="Honeycomb media"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <activity android:name=".PinWidgetActivity" android:exported="true" android:theme="@android:style/Theme.Material.Dialog.Alert">
+            <intent-filter>
+                <action android:name="android.content.pm.action.CONFIRM_PIN_APPWIDGET" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- Block: closes distracting feeds, apps, and websites (FeedGuard.kt). -->
+        <service
+            android:name=".FeedGuard"
+            android:exported="false"
+            android:label="Honeycomb Block"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/feed_guard" />
+        </service>
+        <activity
+            android:name=".FeedsActivity"
+            android:label="Block"
+            android:theme="@style/Home"
+            android:screenOrientation="portrait"
+            android:exported="false"
+            android:taskAffinity="org.honeycomb.launcher.settings" />
+        <service
+            android:name=".BlockTileService"
+            android:exported="true"
+            android:label="Block"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <!-- Honeycomb's one settings entry ("Additional settings in the app" in App info, APPLICATION_PREFERENCES):
+             Run setup again (SetupActivity) and Feeds. -->
+        <activity
+            android:name=".HoneycombSettingsActivity"
+            android:exported="true"
+            android:label="Honeycomb settings"
+            android:theme="@style/Home"
+            android:screenOrientation="portrait"
+            android:taskAffinity="org.honeycomb.launcher.settings">
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".FeedPauseActivity"
+            android:exported="false"
+            android:theme="@style/Home"
+            android:screenOrientation="portrait"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="org.honeycomb.launcher.pause" />
+        <!-- Minimal iOS-style offline keyboard (zero suggestion strip, zero toolbar clutter). -->
+        <service
+            android:name=".HoneycombKeyboardService"
+            android:exported="true"
+            android:label="Honeycomb Keyboard"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/honeycomb_keyboard" />
+        </service>
+    </application>
+</manifest>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fixture responsive_small: its content is 40dp tall, centred, the way a widget lays out inside whatever height it is given. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@android:id/background" android:background="#FFF29900"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+    <TextView android:layout_width="match_parent" android:layout_height="40dp" android:layout_gravity="center"
+        android:contentDescription="fixture-content" android:gravity="center" android:text="responsive_small 40dp"
+        android:textColor="#FFFFFFFF" android:background="#FFF29900" />
+</FrameLayout>

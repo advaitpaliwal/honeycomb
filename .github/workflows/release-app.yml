@@ -1,0 +1,64 @@
+name: release-app
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Assemble and verify the distribution APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          : "${ANDROID_KEYSTORE_BASE64:?}" "${ANDROID_KEYSTORE_PASSWORD:?}" "${ANDROID_KEY_PASSWORD:?}"
+          umask 077
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/honeycomb.p12"
+          trap 'rm -f "$ANDROID_KEYSTORE_PATH"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          unset ANDROID_KEYSTORE_BASE64
+          ver="${GITHUB_REF_NAME#v}"
+          IFS='.' read -r maj min pat <<< "${ver%%-*}"
+          if [[ "${maj:-}" =~ ^[0-9]+$ && "${min:-}" =~ ^[0-9]+$ && "${pat:-}" =~ ^[0-9]+$ ]]; then
+            vcode=$(( maj * 10000 + min * 100 + pat ))
+          else
+            vcode=$(( 1000 + GITHUB_RUN_NUMBER ))
+          fi
+          echo "Building versionName=$ver versionCode=$vcode"
+          ./gradlew --no-daemon :launcher:assembleApp -PappVersionCode="$vcode" -PappVersionName="$ver"
+          apk_name="honeycomb-${GITHUB_REF_NAME#v}.apk"
+          cp launcher/build/outputs/apk/app/launcher-app.apk "$apk_name"
+          signer=$(ls -d "$ANDROID_HOME/build-tools"/*/apksigner | sort -V | tail -n1)
+          cert=$("$signer" verify --print-certs "$apk_name")
+          echo "$cert"
+          digests=$(awk '/certificate SHA-256 digest:/ {print $NF}' <<< "$cert" | sort -u)
+          test "$digests" = '341395e89944cae9ede496c6fe9df0aa5b1c23aaa9623776d16f4dfe7c0c3715'
+          sha256sum "$apk_name" > "${apk_name}.sha256"
+      - name: Attach verified APK and checksum to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          apk_name="honeycomb-${GITHUB_REF_NAME#v}.apk"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$apk_name" "${apk_name}.sha256" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$apk_name" "${apk_name}.sha256" --verify-tag --title "Honeycomb ${GITHUB_REF_NAME#v}" --notes "Honeycomb ${GITHUB_REF_NAME#v} for Android 14 and later."
+          fi

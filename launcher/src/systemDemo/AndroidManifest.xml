@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:platform="http://schemas.android.com/apk/prv/res/android">
+    <uses-permission android:name="android.permission.STATUS_BAR" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <application android:name=".DemoHome" android:defaultToDeviceProtectedStorage="true" platform:usesNonSdkApi="true">
+        <activity android:name=".LauncherActivity" android:directBootAware="true" android:theme="@style/DemoStart" />
+    </application>
+</manifest>

@@ -1,0 +1,12 @@
+Honeycomb is licensed under the Apache License, Version 2.0 (see LICENSE).
+The bundled Big Shoulders Display font (digits only, launcher/src/main/res/font/watch_digits.ttf) is licensed
+separately under the SIL Open Font License 1.1 (see licenses/BigShouldersDisplay-OFL.txt).
+The bundled Inter font (launcher/src/main/res/font/inter.ttf, https://github.com/rsms/inter) is licensed separately
+under the SIL Open Font License 1.1 (see licenses/Inter-OFL.txt).
+This product includes software developed by third parties.
+
+Feedcut (https://github.com/Yxonyx/feedcut), Apache License 2.0, see licenses/Apache-2.0.txt.
+Copied at commit 046ff157e1e4d7df4ed45cc51b5d4cfd7b46d9c3 and adapted in
+launcher/src/main/java/org/honeycomb/launcher/FeedRules.kt (Rules.kt, CheckTimer.kt),
+launcher/src/main/java/org/honeycomb/launcher/FeedGuard.kt (GateService.kt) and
+launcher/src/main/res/xml/feed_guard.xml (accessibility_config.xml).

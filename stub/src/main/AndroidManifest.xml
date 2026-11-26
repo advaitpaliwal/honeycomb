@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="Aaa Stub">
+        <!-- The framework's own Activity class: the app needs no code of its own to have a launcher entry. -->
+        <activity android:name="android.app.Activity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- Widget fixtures (Fixtures.java) for WidgetFitTest and WidgetZooShots. -->
+        <receiver android:name=".Fixtures$Row" android:exported="true" android:label="Fixture 1-row 30dp">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/fixture_row" />
+        </receiver>
+        <receiver android:name=".Fixtures$Mail" android:exported="true" android:label="Fixture 110dp">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/fixture_mail" />
+        </receiver>
+        <receiver android:name=".Fixtures$Cell2x2" android:exported="true" android:label="Fixture 2x2">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/fixture_cell2x2" />
+        </receiver>
+        <receiver android:name=".Fixtures$Cell4x2" android:exported="true" android:label="Fixture 4x2">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/fixture_cell4x2" />
+        </receiver>
+        <receiver android:name=".Fixtures$Cell4x4" android:exported="true" android:label="Fixture 4x4">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/fixture_cell4x4" />
+        </receiver>
+        <receiver android:name=".Fixtures$Responsive" android:exported="true" android:label="Fixture responsive">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/fixture_responsive" />
+        </receiver>
+        <receiver android:name=".Fixtures$Bare" android:exported="true" android:label="Fixture no background">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/fixture_bare" />
+        </receiver>
+        <receiver android:name=".Fixtures$Fixed" android:exported="true" android:label="Fixture not resizable">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/fixture_fixed" />
+        </receiver>
+    </application>
+</manifest>
