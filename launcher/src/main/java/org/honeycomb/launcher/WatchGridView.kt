@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -97,9 +98,18 @@ fun WatchGrid(
     val listState = rememberLazyListState()
     val rows = remember(icons.size) { honeycombRows(icons.size) }
     val px = LocalDensity.current.density
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val dragging by listState.interactionSource.collectIsDraggedAsState()
     val currentOnTap by rememberUpdatedState(onTap)
     val currentOnLongPress by rememberUpdatedState(onLongPress)
 
+    LaunchedEffect(dragging) {
+        if (dragging) {
+            focusManager.clearFocus(force = true)
+            keyboard?.hide()
+        }
+    }
     LaunchedEffect(listState, crownKeys, px) {
         crownKeys.collect { step ->
             listState.animateScrollBy(-step * (ICON_D + ROW_GAP) * px)

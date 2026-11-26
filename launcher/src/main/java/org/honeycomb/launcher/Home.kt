@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
@@ -558,6 +559,15 @@ fun AppListScreen(
         visible.getOrNull((state.firstVisibleItemIndex - 1).coerceAtLeast(0))?.let { sectionLetter(it.label) }
     }
     val px = LocalDensity.current.density
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val dragging by state.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(dragging) {
+        if (dragging) {
+            focusManager.clearFocus(force = true)
+            keyboard?.hide()
+        }
+    }
     LaunchedEffect(state, rowSteps, px) { rowSteps.collect { state.scrollBy(-it * LIST_ROW * px) } }
     LaunchedEffect(searchFocusKey) { if (searchFocusKey > 0) state.scrollToItem(0) }
     val switchButton = onGridView != null && pickFor == null

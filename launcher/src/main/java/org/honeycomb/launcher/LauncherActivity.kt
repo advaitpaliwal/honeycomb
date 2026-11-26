@@ -46,13 +46,28 @@ class LauncherActivity : ComponentActivity() {
     private var searchFocusKey by androidx.compose.runtime.mutableIntStateOf(0)
     private val rowSteps = kotlinx.coroutines.flow.MutableSharedFlow<Int>(extraBufferCapacity = 16)
 
+    /** Immediately dismisses the soft keyboard so it never lags behind layer transitions. */
+    private fun hideKeyboard() {
+        searchFocusKey = 0
+        WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.ime())
+        runCatching {
+            getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                ?.hideSoftInputFromWindow(window.decorView.windowToken, 0)
+        }
+    }
+
     /** Every input goes through the table. */
     fun input(i: Input) {
         launched = null
         val intent = intentFor(space, i)
         if (intent == Intent.Home || intent == Intent.Out) { editing = false; pickFor = null }
-        if (intent == Intent.Search) searchFocusKey++
-        space = reduce(space, intent)
+        val next = reduce(space, intent)
+        if (intent == Intent.Search) {
+            searchFocusKey++
+        } else if (next.depth != Depth.Apps || next.edge != null) {
+            hideKeyboard()
+        }
+        space = next
     }
 
     private fun tall() = resources.displayMetrics.let { tallScreen(it.widthPixels, it.heightPixels) }
@@ -175,6 +190,15 @@ class LauncherActivity : ComponentActivity() {
                     val s = space
                     val rise = remember { RiseState() }
                     val p = pull
+                    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+                    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+                    LaunchedEffect(s.depth, s.edge) {
+                        if (s.depth != Depth.Apps || s.edge != null) {
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                            hideKeyboard()
+                        }
+                    }
                     val inputSpace = { if (editing || pickFor != null) space.copy(edge = null, picking = true) else space }
                     Box(
                         Modifier.fillMaxSize()
@@ -185,7 +209,13 @@ class LauncherActivity : ComponentActivity() {
                                 space = inputSpace,
                                 onInput = { pull = null; input(it) },
                                 onDrag = { i, px ->
-                                    when (intentFor(space, i)) {
+                                    val dragIntent = intentFor(space, i)
+                                    if (space.depth == Depth.Apps && (dragIntent == Intent.Out || dragIntent == Intent.Notifications || dragIntent == Intent.Control)) {
+                                        focusManager.clearFocus(force = true)
+                                        keyboardController?.hide()
+                                        hideKeyboard()
+                                    }
+                                    when (dragIntent) {
                                         Intent.RaiseStack -> rise.drag(px)
                                         Intent.LowerStack -> rise.drag(-px)
                                         else -> pull = i to px
@@ -325,6 +355,7 @@ class LauncherActivity : ComponentActivity() {
 
     override fun onStop() {
         inFront = false
+        hideKeyboard()
         if (waitingForUnlock) { super.onStop(); return }
         Widgets.host(this).stopListening()
         Providers.stop()
@@ -376,6 +407,7 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun open(component: ComponentName, from: Rect?) {
+        hideKeyboard()
         val bounds = from?.takeUnless { it.isEmpty }
         val options = bounds?.let {
             runCatching { ActivityOptions.makeScaleUpAnimation(window.decorView, it.left, it.top, it.width(), it.height()) }.getOrNull()
