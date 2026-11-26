@@ -56,25 +56,26 @@ When I started paying attention to my Apple Watch, I noticed how intentionally m
 
 There are six faces to pick from: Stacked, Info, Split, Hour, Classic and Plain. Colours, text size and dark mode follow your phone's own settings.
 
-### Built-in Block (Feeds & Websites, 100% offline)
+### Built-in Block (Feeds & Websites, 100% on-device)
 
 Honeycomb includes an optional **Block** screen (accessible from Control Centre, Honeycomb settings, or the **Block** Quick Settings tile):
 - **Short-form feeds & addictive tabs:** Block Instagram Reels/Explore, YouTube Shorts, Snapchat Spotlight, TikTok, and more — or add a pause/limit before opening distracting apps.
-- **Zero-network website blocking:** Block distracting domains or toggle built-in categories (Social, News, Video, Shopping, Adult) with per-site controls and custom domains — all locally on-device with no VPN and no internet permission.
+- **Zero-VPN website blocking:** Block distracting domains or toggle built-in categories (Social, News, Video, Shopping, Adult) with per-site controls and custom domains — all locally on-device with no VPN and no external server.
 - **Strict mode:** Optional 24-hour cooldown before a block rule can be loosened or turned off.
 
 ## Download
 
 **[Download the latest APK](https://github.com/advaitpaliwal/honeycomb/releases/latest)** (Android 14 or newer).
 
-### Direct APK install
+### Direct APK install & built-in updates
 1. On your phone, open the link above and tap `honeycomb-x.y.z.apk` under **Assets**.
 2. Open the downloaded file. If Android asks, allow your browser to install apps.
 3. Open Honeycomb. Setup asks to make it your home app, then walks you through the rest one screen at a time. Every step can be skipped.
 4. If notification or accessibility access is greyed out, Android is blocking it because the app came from a sideloaded APK. Setup sends you to App info, where you tap **⋮ › Allow restricted settings**.
+5. **Stay up to date in one tap:** Honeycomb checks GitHub Releases automatically (or anytime from **Control Centre › Settings › Updates**), verifies the release SHA-256 checksum, and hands the signed APK directly to Android's package installer.
 
-### Automatic updates with Obtainium
-If you use [Obtainium](https://github.com/ImranR98/Obtainium), add `https://github.com/advaitpaliwal/honeycomb` to get automatic release notifications and one-tap updates directly from GitHub Releases.
+### Updates with Obtainium
+If you prefer managing sideloaded apps with [Obtainium](https://github.com/ImranR98/Obtainium), add `https://github.com/advaitpaliwal/honeycomb` to track releases there too.
 
 **To go back,** open Settings › Apps › Default apps › Home app, pick your old home screen, then uninstall Honeycomb.
 
@@ -82,12 +83,14 @@ No root, no bootloader unlock and no account. Honeycomb only uses Android's norm
 
 ## Privacy
 
-Honeycomb does **not** request the `INTERNET` permission, so Android itself prevents it from sending anything off your phone. There are no accounts, ads, telemetry, or analytics, and it opts out of Android's cloud backup (`android:allowBackup="false"`).
+Honeycomb has **no accounts, no analytics, no telemetry, and no ads**, and opts out of Android's cloud backup (`android:allowBackup="false"`). The only network requests Honeycomb ever makes are read-only HTTPS requests to `api.github.com` / `github.com` to check for and download signed Honeycomb updates (verified against the release's `.sha256` checksum and signing certificate).
 
 | Permission | Why |
 | --- | --- |
 | Home app role | To be your home screen |
 | See all apps (`QUERY_ALL_PACKAGES`) | To list every app you can open |
+| Internet (`INTERNET`) | Strictly to check for and download signed APK updates from GitHub Releases (`AppUpdater.kt`) |
+| Install packages (`REQUEST_INSTALL_PACKAGES`, optional) | To launch Android's package installer when you tap an in-app update |
 | Usage access (optional) | To rank your 7 most used apps. Without it, Honeycomb counts launches locally |
 | Notification access (optional) | For Notification Centre, Now Playing and live timers in the Smart Stack |
 | Do Not Disturb access (optional) | For the Quiet button in Control Centre (media audio stays unmuted) |
@@ -99,8 +102,8 @@ Honeycomb does **not** request the `INTERNET` permission, so Android itself prev
 
 **Why should I trust an APK that asks for Accessibility or Notification access?**
 You don't have to take anyone's word for it:
-1. Honeycomb has **zero `INTERNET` permission** in [`AndroidManifest.xml`](launcher/src/main/AndroidManifest.xml). Android enforces at the OS level that it cannot make network requests.
-2. Every sensitive permission (Usage, Notifications, DND, Write Settings, Accessibility) is **100% optional** and skippable during setup — the launcher works fine without them.
+1. Honeycomb's only network code is the ~250-line open-source [`AppUpdater.kt`](launcher/src/main/java/org/honeycomb/launcher/AppUpdater.kt), which is locked to GitHub Releases HTTPS hosts (`api.github.com`, `github.com`, `*.githubusercontent.com`) and verifies every downloaded APK against its SHA-256 checksum. Zero user data is ever uploaded anywhere.
+2. Every sensitive permission (Usage, Notifications, DND, Write Settings, Accessibility, Install Packages) is **100% optional** and skippable — the launcher works fine without them.
 3. The entire codebase is open source under Apache 2.0, and release APKs are built transparently by [GitHub Actions](.github/workflows/release-app.yml) with SHA-256 checksums published alongside every release.
 
 **Why Android 14+ only?**
@@ -119,7 +122,7 @@ Android 13+ automatically restricts Notification Listener and Accessibility togg
 Google Play is on the roadmap once the cross-device testing pass is complete. Until then, GitHub Releases (or [Obtainium](https://github.com/ImranR98/Obtainium) for automatic updates) is the official channel.
 
 **Does Honeycomb drain battery or keep anything running in the background?**
-No background network syncing, no analytics, and no wake locks. Watch faces only tick while the screen is on and Honeycomb is visible.
+No background services, no analytics, and no wake locks. Watch faces only tick while the screen is on and Honeycomb is visible, and update checks run at most once every 12 hours when you return to the home screen.
 
 **How do I switch back to my old home screen?**
 Open **Settings › Apps › Default apps › Home app**, pick your previous launcher (e.g. Pixel Launcher or One UI Home), and uninstall Honeycomb. Nothing is permanently modified.

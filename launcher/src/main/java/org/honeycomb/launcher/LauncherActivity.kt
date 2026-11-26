@@ -343,6 +343,7 @@ class LauncherActivity : ComponentActivity() {
         if (!waitingForUnlock) {
             runCatching { Widgets.host(this).startListening() }
             runCatching { Quiet.ensureMediaAllowed(this) }
+            runCatching { AppUpdater.checkIfDue(this) }
         }
     }
 

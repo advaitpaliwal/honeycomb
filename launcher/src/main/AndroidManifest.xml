@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Control Centre's brightness slider writes Settings.System.SCREEN_BRIGHTNESS, once granted in setup (ACTION_MANAGE_WRITE_SETTINGS) -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
+    <!-- In-app updates from GitHub Releases (AppUpdater.kt): checks releases/latest and installs signed APKs -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" tools:ignore="RequestInstallPackagesPolicy" />
     <application
         android:allowBackup="false"
         android:label="Honeycomb"
@@ -43,6 +46,15 @@
             android:name=".IconThemeProvider"
             android:authorities="${applicationId}.grid_control"
             android:exported="true" />
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
         <!-- First-run setup (Setup.kt): one role or permission per screen; "Run setup again" in Honeycomb's settings entry
              (HoneycombSettingsActivity) opens it again. -->
         <activity

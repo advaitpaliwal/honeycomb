@@ -302,6 +302,12 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                     }
                 }
                 val ctx = LocalContext.current
+                val updateState by AppUpdater.state.collectAsState()
+                val availableUpdate = when (val s = updateState) {
+                    is UpdateState.Available -> s.release
+                    is UpdateState.ReadyToInstall -> s.release
+                    else -> null
+                }
                 Spacer(Modifier.height(pt * ControlGrid.GAP_Y))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -319,6 +325,36 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                         onClick = { HoneycombKeyboard.openSettingsOrPicker(ctx) },
                         modifier = Modifier.testTag("control-keyboard"),
                         icon = Symbols.keyboard,
+                        height = 40.dp,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                if (availableUpdate != null) {
+                    CapsuleButton(
+                        text = "Update ${availableUpdate.tag}",
+                        onClick = {
+                            ctx.startActivity(
+                                Intent(ctx, HoneycombSettingsActivity::class.java)
+                                    .putExtra(AppUpdater.EXTRA_START_UPDATE, true)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        },
+                        modifier = Modifier.testTag("control-update"),
+                        icon = Symbols.download,
+                        filled = true,
+                        height = 40.dp,
+                    )
+                } else {
+                    CapsuleButton(
+                        text = "Settings",
+                        onClick = {
+                            ctx.startActivity(
+                                Intent(ctx, HoneycombSettingsActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        },
+                        modifier = Modifier.testTag("control-settings"),
+                        icon = Symbols.settings,
                         height = 40.dp,
                     )
                 }

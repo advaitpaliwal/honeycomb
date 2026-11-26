@@ -62,6 +62,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The pause before a feed app opens, after one sec (Grüning et al., PNAS 2023, doi:10.1073/pnas.2213114120):
@@ -846,14 +847,68 @@ class BlockTileService : android.service.quicksettings.TileService() {
     }
 }
 
-/** Honeycomb's settings entry in App info (APPLICATION_PREFERENCES): Setup, Block, and Keyboard. */
+/** Honeycomb's settings entry in App info (APPLICATION_PREFERENCES): Setup, Block, Keyboard, and Updates. */
 class HoneycombSettingsActivity : ComponentActivity() {
+    private var pendingInstallPath: String? = null
+
+    override fun onResume() {
+        super.onResume()
+        AppUpdater.loadCached(this)
+        val pending = pendingInstallPath
+        if (pending != null && packageManager.canRequestPackageInstalls()) {
+            pendingInstallPath = null
+            AppUpdater.launchInstaller(this, pending)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppUpdater.loadCached(this)
+        val autoStart = intent.getBooleanExtra(AppUpdater.EXTRA_START_UPDATE, false)
         // SetupActivity reads this action as a re-run: it shows "You're all set" even when nothing is missing
         val setup = Intent(this, SetupActivity::class.java).setAction(Intent.ACTION_APPLICATION_PREFERENCES)
         setContent {
             ProvideScale {
+                val updateState by AppUpdater.state.collectAsState()
+                val version = remember { AppUpdater.installedVersion(this@HoneycombSettingsActivity) }
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+                LaunchedEffect(autoStart) {
+                    if (autoStart) {
+                        when (val s = AppUpdater.state.value) {
+                            is UpdateState.Available -> {
+                                if (AppUpdater.downloadAndInstall(this@HoneycombSettingsActivity, s.release)) {
+                                    val ready = AppUpdater.state.value as? UpdateState.ReadyToInstall
+                                    if (ready != null && !packageManager.canRequestPackageInstalls()) {
+                                        pendingInstallPath = ready.apkPath
+                                    }
+                                }
+                            }
+                            is UpdateState.ReadyToInstall -> {
+                                if (!AppUpdater.launchInstaller(this@HoneycombSettingsActivity, s.apkPath)) {
+                                    pendingInstallPath = s.apkPath
+                                }
+                            }
+                            else -> AppUpdater.checkNow(this@HoneycombSettingsActivity)
+                        }
+                    }
+                }
+
+                val (updateTitle, updateSubtitle, updateActive) = when (val s = updateState) {
+                    UpdateState.Idle -> Triple("Updates", "v$version · Check for updates", false)
+                    UpdateState.Checking -> Triple("Updates", "v$version · Checking…", false)
+                    is UpdateState.UpToDate -> Triple("Updates", "v${s.currentVersion} · Up to date", false)
+                    is UpdateState.Available -> Triple("Update available", "${s.release.tag} · Tap to download", true)
+                    is UpdateState.Downloading -> Triple(
+                        "Downloading ${s.release.tag}",
+                        if (s.percent > 0) "${s.percent}%" else "Starting…",
+                        true,
+                    )
+                    is UpdateState.Verifying -> Triple("Verifying ${s.release.tag}", "Checking SHA-256…", true)
+                    is UpdateState.ReadyToInstall -> Triple("Install ${s.release.tag}", "Downloaded · Tap to install", true)
+                    is UpdateState.Error -> Triple("Updates", s.message, false)
+                }
+
                 Column(
                     Modifier.fillMaxSize().background(HoneycombColors.background).safeDrawingPadding()
                         .padding(horizontal = 16.dp, vertical = 12.dp).testTag("honeycomb-settings"),
@@ -864,7 +919,7 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         title = "Setup",
                         valueText = "Permissions & home app",
                         index = 0,
-                        count = 3,
+                        count = 4,
                         glyph = Symbols.apps,
                         onClick = { startActivity(setup) },
                         modifier = Modifier.testTag("settings-setup"),
@@ -873,7 +928,7 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         title = "Block",
                         valueText = "Feeds, apps & websites",
                         index = 1,
-                        count = 3,
+                        count = 4,
                         glyph = Symbols.block,
                         onClick = { startActivity(Intent(this@HoneycombSettingsActivity, FeedsActivity::class.java)) },
                         modifier = Modifier.testTag("settings-feeds"),
@@ -882,10 +937,55 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         title = "Keyboard",
                         valueText = "Input method settings",
                         index = 2,
-                        count = 3,
+                        count = 4,
                         glyph = Symbols.keyboard,
                         onClick = { HoneycombKeyboard.openSettingsOrPicker(this@HoneycombSettingsActivity) },
                         modifier = Modifier.testTag("settings-keyboard"),
+                    )
+                    NavSummaryRow(
+                        title = updateTitle,
+                        valueText = updateSubtitle,
+                        index = 3,
+                        count = 4,
+                        glyph = Symbols.download,
+                        accentActive = updateActive,
+                        onClick = {
+                            when (val s = updateState) {
+                                is UpdateState.Available -> scope.launch {
+                                    if (AppUpdater.downloadAndInstall(this@HoneycombSettingsActivity, s.release)) {
+                                        val ready = AppUpdater.state.value as? UpdateState.ReadyToInstall
+                                        if (ready != null && !packageManager.canRequestPackageInstalls()) {
+                                            pendingInstallPath = ready.apkPath
+                                        }
+                                    }
+                                }
+                                is UpdateState.ReadyToInstall -> {
+                                    if (!AppUpdater.launchInstaller(this@HoneycombSettingsActivity, s.apkPath)) {
+                                        pendingInstallPath = s.apkPath
+                                    }
+                                }
+                                is UpdateState.Error -> {
+                                    val rel = s.release
+                                    scope.launch {
+                                        if (rel != null) {
+                                            if (AppUpdater.downloadAndInstall(this@HoneycombSettingsActivity, rel)) {
+                                                val ready = AppUpdater.state.value as? UpdateState.ReadyToInstall
+                                                if (ready != null && !packageManager.canRequestPackageInstalls()) {
+                                                    pendingInstallPath = ready.apkPath
+                                                }
+                                            }
+                                        } else {
+                                            AppUpdater.checkNow(this@HoneycombSettingsActivity)
+                                        }
+                                    }
+                                }
+                                UpdateState.Idle, is UpdateState.UpToDate -> scope.launch {
+                                    AppUpdater.checkNow(this@HoneycombSettingsActivity)
+                                }
+                                UpdateState.Checking, is UpdateState.Downloading, is UpdateState.Verifying -> Unit
+                            }
+                        },
+                        modifier = Modifier.testTag("settings-updates"),
                     )
                 }
             }
