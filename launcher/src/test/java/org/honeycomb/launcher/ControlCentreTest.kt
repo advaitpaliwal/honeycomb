@@ -132,4 +132,24 @@ class ControlCentreTest {
     @Test fun withTheSwitchOffNoCallsRingOnlyAlarmsAndMedia() {
         assertEquals(Policy.PRIORITY_CATEGORY_ALARMS or Policy.PRIORITY_CATEGORY_MEDIA, Quiet.rules(contactsCall = false).categories)
     }
+
+    @Test fun quietSupportsContactsRepeatCallersEveryoneAndNone() {
+        val def = Quiet.rules(Quiet.CallMode.CONTACTS, repeatCallers = true)
+        assertEquals(
+            Policy.PRIORITY_CATEGORY_ALARMS or Policy.PRIORITY_CATEGORY_MEDIA or
+                Policy.PRIORITY_CATEGORY_CALLS or Policy.PRIORITY_CATEGORY_REPEAT_CALLERS,
+            def.categories,
+        )
+        assertEquals(Policy.PRIORITY_SENDERS_CONTACTS, def.callSenders)
+
+        val everyone = Quiet.rules(Quiet.CallMode.EVERYONE, repeatCallers = true)
+        assertEquals(Policy.PRIORITY_SENDERS_ANY, everyone.callSenders)
+        assertTrue(everyone.categories and Policy.PRIORITY_CATEGORY_CALLS != 0)
+
+        val noneWithRepeat = Quiet.rules(Quiet.CallMode.NONE, repeatCallers = true)
+        assertEquals(
+            Policy.PRIORITY_CATEGORY_ALARMS or Policy.PRIORITY_CATEGORY_MEDIA or Policy.PRIORITY_CATEGORY_REPEAT_CALLERS,
+            noneWithRepeat.categories,
+        )
+    }
 }

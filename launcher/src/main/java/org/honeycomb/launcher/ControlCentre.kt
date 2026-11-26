@@ -77,18 +77,27 @@ import kotlinx.coroutines.delay
 
 // ---- the device's state -------------------------------------------------------------------------------------------
 
-/** Quiet: Android's Do Not Disturb set to priority only, letting through calls from contacts (if allowed) and alarms. */
+/** Quiet: Android's Do Not Disturb set to priority only — zero app notification noise while protecting real calls & emergencies. */
 object Quiet {
     private const val PREFS = "quiet"
+    private const val KEY_CALL_MODE = "call_mode"
+    private const val KEY_REPEAT_CALLERS = "repeat_callers"
+
+    enum class CallMode(val label: String) {
+        CONTACTS("Contacts"),
+        EVERYONE("Everyone"),
+        NONE("No one"),
+    }
 
     /** The policy's numbers, kept apart from NotificationManager.Policy so a unit test can read them. */
     data class Rules(val categories: Int, val callSenders: Int, val messageSenders: Int, val suppressed: Int, val conversations: Int)
 
-    fun rules(contactsCall: Boolean) = Rules(
+    fun rules(callMode: CallMode, repeatCallers: Boolean = true) = Rules(
         categories = NotificationManager.Policy.PRIORITY_CATEGORY_ALARMS or
             NotificationManager.Policy.PRIORITY_CATEGORY_MEDIA or
-            (if (contactsCall) NotificationManager.Policy.PRIORITY_CATEGORY_CALLS else 0),
-        callSenders = NotificationManager.Policy.PRIORITY_SENDERS_CONTACTS,
+            (if (callMode != CallMode.NONE) NotificationManager.Policy.PRIORITY_CATEGORY_CALLS else 0) or
+            (if (repeatCallers) NotificationManager.Policy.PRIORITY_CATEGORY_REPEAT_CALLERS else 0),
+        callSenders = if (callMode == CallMode.EVERYONE) NotificationManager.Policy.PRIORITY_SENDERS_ANY else NotificationManager.Policy.PRIORITY_SENDERS_CONTACTS,
         messageSenders = NotificationManager.Policy.PRIORITY_SENDERS_CONTACTS, // unused: messages are not a category
         // notifications are off: no sound, no dot, no badge, no peek, nothing in the status bar or the shade
         suppressed = NotificationManager.Policy.SUPPRESSED_EFFECT_BADGE or NotificationManager.Policy.SUPPRESSED_EFFECT_STATUS_BAR or
@@ -98,12 +107,27 @@ object Quiet {
         conversations = NotificationManager.Policy.CONVERSATION_SENDERS_NONE,
     )
 
+    /** Legacy 1-arg helper kept for compatibility with existing unit tests. */
+    fun rules(contactsCall: Boolean) = rules(if (contactsCall) CallMode.CONTACTS else CallMode.NONE, repeatCallers = false)
+
     private fun nm(ctx: Context) = ctx.getSystemService(NotificationManager::class.java)
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun granted(ctx: Context) = nm(ctx).isNotificationPolicyAccessGranted
     fun isOn(ctx: Context) = nm(ctx).currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_PRIORITY
-    fun contactsCall(ctx: Context) = prefs(ctx).getBoolean("contacts_call", true)
+
+    fun callMode(ctx: Context): CallMode {
+        val p = prefs(ctx)
+        p.getString(KEY_CALL_MODE, null)?.let { name ->
+            CallMode.entries.firstOrNull { it.name == name }?.let { return it }
+        }
+        return if (p.getBoolean("contacts_call", true)) CallMode.CONTACTS else CallMode.NONE
+    }
+
+    /** Same number calling twice within 15 minutes breaks through by default so real emergencies never fail silently. */
+    fun repeatCallers(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_REPEAT_CALLERS, true)
+
+    fun contactsCall(ctx: Context) = callMode(ctx) != CallMode.NONE
 
     /**
      * Setup's Quiet screen was answered with Turn on. Notification access also gives Do Not Disturb access on Android 15
@@ -122,42 +146,73 @@ object Quiet {
     /** Turns Quiet on or off; without policy access it asks for it instead and returns false. */
     fun set(ctx: Context, on: Boolean): Boolean {
         if (!granted(ctx)) { ask(ctx); return false }
-        if (on) applyPolicy(ctx, contactsCall(ctx))
+        if (on) applyPolicy(ctx, callMode(ctx), repeatCallers(ctx))
         nm(ctx).setInterruptionFilter(if (on) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL)
         return true
     }
 
-    /** Ensures media playback stays unmuted when Quiet is already active from an earlier Honeycomb version. */
+    /** Keeps Android's active DND policy synced (media unmuted + repeat callers + chosen call mode) across upgrades. */
     fun ensureMediaAllowed(ctx: Context) {
         if (!granted(ctx) || !isOn(ctx)) return
+        val expected = rules(callMode(ctx), repeatCallers(ctx))
         val cur = nm(ctx).notificationPolicy
-        if (cur.priorityCategories and NotificationManager.Policy.PRIORITY_CATEGORY_MEDIA == 0) {
-            applyPolicy(ctx, contactsCall(ctx))
+        if (cur.priorityCategories != expected.categories || cur.priorityCallSenders != expected.callSenders) {
+            applyPolicy(ctx, callMode(ctx), repeatCallers(ctx))
         }
     }
 
-    private fun applyPolicy(ctx: Context, allow: Boolean) {
-        val r = rules(allow)
+    private fun applyPolicy(ctx: Context, mode: CallMode, repeat: Boolean) {
+        val r = rules(mode, repeat)
         nm(ctx).notificationPolicy = NotificationManager.Policy(r.categories, r.callSenders, r.messageSenders, r.suppressed, r.conversations)
     }
 
-    fun setContactsCall(ctx: Context, allow: Boolean): Boolean {
+    fun setCallMode(ctx: Context, mode: CallMode): Boolean {
         if (!granted(ctx)) { ask(ctx); return false }
-        applyPolicy(ctx, allow)
-        prefs(ctx).edit().putBoolean("contacts_call", allow).apply()
+        val repeat = repeatCallers(ctx)
+        applyPolicy(ctx, mode, repeat)
+        prefs(ctx).edit()
+            .putString(KEY_CALL_MODE, mode.name)
+            .putBoolean("contacts_call", mode != CallMode.NONE)
+            .apply()
         return true
     }
+
+    fun setRepeatCallers(ctx: Context, allow: Boolean): Boolean {
+        if (!granted(ctx)) { ask(ctx); return false }
+        applyPolicy(ctx, callMode(ctx), allow)
+        prefs(ctx).edit().putBoolean(KEY_REPEAT_CALLERS, allow).apply()
+        return true
+    }
+
+    fun setContactsCall(ctx: Context, allow: Boolean): Boolean =
+        setCallMode(ctx, if (allow) CallMode.CONTACTS else CallMode.NONE)
 
     fun ask(ctx: Context) {
         runCatching { ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
 
-    /** The Quiet screen's two lines, for the real state: whether Quiet is on and whether contacts may call. */
-    fun words(on: Boolean, contactsCall: Boolean): Pair<String, String> {
-        val calls = if (contactsCall) "your contacts can still call you. Other calls show as missed." else "every call shows as missed."
+    fun summary(mode: CallMode, repeat: Boolean): String = when (mode) {
+        CallMode.CONTACTS -> if (repeat) "Contacts + repeat callers" else "Contacts only"
+        CallMode.EVERYONE -> "All calls ring"
+        CallMode.NONE -> if (repeat) "Repeat callers only" else "No calls"
+    }
+
+    /** The Quiet screen's two lines for the full call policy. */
+    fun words(on: Boolean, mode: CallMode, repeat: Boolean): Pair<String, String> {
+        val calls = when (mode) {
+            CallMode.EVERYONE -> "every phone call rings through while app notifications stay silent."
+            CallMode.CONTACTS -> if (repeat) "your contacts and repeat callers (2x in 15 min) still ring. Other calls show as missed."
+                else "your contacts can still call you. Other calls show as missed."
+            CallMode.NONE -> if (repeat) "only repeat callers (2x in 15 min) ring through. All other calls show as missed."
+                else "every call shows as missed."
+        }
         return if (on) "Notifications are off. No sounds, no red dot, no badges on apps." to calls.replaceFirstChar { it.uppercase() }
         else "Quiet is off. Notifications and calls come through as usual." to "When Quiet is on, $calls"
     }
+
+    /** Legacy 2-arg helper kept for SetupFlowTest. */
+    fun words(on: Boolean, contactsCall: Boolean): Pair<String, String> =
+        words(on, if (contactsCall) CallMode.CONTACTS else CallMode.NONE, repeat = false)
 }
 
 /** What each tile shows, read fresh from the system. */
@@ -432,7 +487,8 @@ private const val FLASHLIGHT_GLYPH = 26f
 fun QuietScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val t = rememberToggles()
-    var contacts by remember { mutableStateOf(Quiet.contactsCall(ctx)) }
+    var mode by remember { mutableStateOf(Quiet.callMode(ctx)) }
+    var repeat by remember { mutableStateOf(Quiet.repeatCallers(ctx)) }
     val body = HoneycombType.body.copy(color = HoneycombColors.secondaryLabel)
     HoneycombTheme { Backdrop(Modifier.testTag("quiet"), sheet = true) {
         // the watch's own insets (31-settings-notifications): Back and text 16.5 pt from the screen's left, the time 18 pt
@@ -447,17 +503,53 @@ fun QuietScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(Space.s))
             BasicText("Quiet", Modifier.padding(horizontal = QuietInset.text), style = HoneycombType.largeTitle)
             Spacer(Modifier.height(Space.s))
-            val (state, calls) = Quiet.words(t.quiet, contacts)
+            val (state, calls) = Quiet.words(t.quiet, mode, repeat)
             BasicText(state, Modifier.padding(horizontal = QuietInset.text).testTag("quiet-state"), style = body)
-            Spacer(Modifier.height(Space.s))
+            Spacer(Modifier.height(Space.m))
+            BasicText("Allow calls from", Modifier.padding(horizontal = QuietInset.text), style = HoneycombType.footnote.copy(color = HoneycombColors.secondaryLabel))
+            Spacer(Modifier.height(Space.xs))
             Platter(Modifier.fillMaxWidth().padding(horizontal = QuietInset.platter).testTag("quiet-contacts"), padding = 0.dp) {
-                Row(Modifier.fillMaxWidth().toggleable(contacts, role = Role.Switch, onValueChange = {
-                    if (Quiet.setContactsCall(ctx, it)) contacts = it
-                }).sizeIn(minHeight = ControlSize.minHitArea).padding(horizontal = QuietInset.row, vertical = Space.s),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    BasicText("Calls from contacts only", Modifier.weight(1f), style = HoneycombType.body)
-                    Spacer(Modifier.size(Space.s))
-                    Switch(contacts)
+                Column(Modifier.fillMaxWidth()) {
+                    Quiet.CallMode.entries.forEachIndexed { idx, option ->
+                        if (idx > 0) {
+                            Box(Modifier.fillMaxWidth().padding(horizontal = QuietInset.row).height(1.dp).background(HoneycombColors.outline))
+                        }
+                        val selected = mode == option
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable { if (Quiet.setCallMode(ctx, option)) mode = option }
+                                .sizeIn(minHeight = ControlSize.minHitArea)
+                                .padding(horizontal = QuietInset.row, vertical = Space.s)
+                                .testTag("quiet-mode-${option.name.lowercase()}"),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            BasicText(option.label, Modifier.weight(1f), style = HoneycombType.body)
+                            if (selected) {
+                                Box(Modifier.size(10.dp).clip(CircleShape).background(HoneycombColors.accent))
+                            }
+                        }
+                    }
+                }
+            }
+            if (mode != Quiet.CallMode.EVERYONE) {
+                Spacer(Modifier.height(Space.s))
+                Platter(Modifier.fillMaxWidth().padding(horizontal = QuietInset.platter).testTag("quiet-repeat"), padding = 0.dp) {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .toggleable(repeat, role = Role.Switch, onValueChange = {
+                                if (Quiet.setRepeatCallers(ctx, it)) repeat = it
+                            })
+                            .sizeIn(minHeight = ControlSize.minHitArea)
+                            .padding(horizontal = QuietInset.row, vertical = Space.s),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            BasicText("Repeat callers", style = HoneycombType.body)
+                            BasicText("2nd call within 15 min rings", style = HoneycombType.footnote.copy(color = HoneycombColors.secondaryLabel))
+                        }
+                        Spacer(Modifier.size(Space.s))
+                        Switch(repeat)
+                    }
                 }
             }
             Spacer(Modifier.height(Space.m))
