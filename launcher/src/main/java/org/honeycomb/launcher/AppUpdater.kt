@@ -64,7 +64,7 @@ object AppUpdater {
     private const val KEY_SHA_URL = "cached_sha_url"
     private const val KEY_NOTES = "cached_notes"
 
-    private const val CHECK_INTERVAL_MS = 12L * 60 * 60 * 1000
+    private const val CHECK_INTERVAL_MS = 2L * 60 * 60 * 1000
     private const val CONNECT_TIMEOUT_MS = 10_000
     private const val READ_TIMEOUT_MS = 20_000
     private const val MAX_REDIRECTS = 5

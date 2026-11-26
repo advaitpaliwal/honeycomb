@@ -270,11 +270,12 @@ fun WatchGrid(
         }
     }
 
-    fun performSwap(fromKey: String, targetKey: String) {
+    fun performSwap(fromKey: String, targetKey: String): Offset? {
         val list = currentKeys
         val fromIdx = list.indexOf(fromKey)
         val toIdx = list.indexOf(targetKey)
-        if (fromIdx < 0 || toIdx < 0 || fromIdx == toIdx) return
+        if (fromIdx < 0 || toIdx < 0 || fromIdx == toIdx) return null
+        val destCenter = slotRectsContainer[targetKey]?.center
         snapshotForFlip()
         currentOnMove?.invoke(fromIdx, toIdx)
         lastSwapMs = SystemClock.uptimeMillis()
@@ -282,6 +283,7 @@ fun WatchGrid(
         hoverCandidateKey = null
         hoverSinceMs = 0L
         view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        return destCenter
     }
 
     fun hitTestKey(localPos: Offset): String? {
@@ -300,9 +302,9 @@ fun WatchGrid(
         return bestKey
     }
 
-    fun evaluateHoverSwap(centerContainer: Offset, forceImmediate: Boolean = false) {
-        val active = draggedKey ?: return
-        if (currentOnMove == null) return
+    fun evaluateHoverSwap(centerContainer: Offset, forceImmediate: Boolean = false): Offset? {
+        val active = draggedKey ?: return null
+        if (currentOnMove == null) return null
         val iconPx = ICON_D * px
         val outerRadius = iconPx * 0.56f
         val coreRadius = iconPx * 0.34f
@@ -320,31 +322,31 @@ fun WatchGrid(
         if (bestKey == null) {
             hoverCandidateKey = null
             hoverSinceMs = 0L
-            return
+            return null
         }
         val now = SystemClock.uptimeMillis()
         // Reverse-swap cooldown prevents oscillation at the midpoint between two icons
         if (!forceImmediate && bestKey == lastSwapPartnerKey && (now - lastSwapMs) < SWAP_COOLDOWN_MS) {
-            return
+            return null
         }
         if (forceImmediate || bestDist <= coreRadius) {
-            performSwap(active, bestKey)
-            return
+            return performSwap(active, bestKey)
         }
         if (hoverCandidateKey != bestKey) {
             hoverCandidateKey = bestKey
             hoverSinceMs = now
         } else if (now - hoverSinceMs >= SWAP_DWELL_MS) {
-            performSwap(active, bestKey)
+            return performSwap(active, bestKey)
         }
+        return null
     }
 
     fun settleDraggedIcon(activeKey: String, iconBitmap: ImageBitmap?, releaseCenter: Offset) {
-        // Check if finger released right on top of a neighbor before dwell timer expired
-        evaluateHoverSwap(releaseCenter, forceImmediate = true)
+        // If finger released right over a neighbor before dwell expired, complete the swap and capture its exact center!
+        val swappedDestCenter = evaluateHoverSwap(releaseCenter, forceImmediate = true)
         val iconPx = ICON_D * px
         val startTopLeft = releaseCenter - Offset(iconPx / 2f, iconPx / 2f)
-        val targetCenter = slotRectsContainer[activeKey]?.center ?: releaseCenter
+        val targetCenter = swappedDestCenter ?: slotRectsContainer[activeKey]?.center ?: releaseCenter
         val targetTopLeft = targetCenter - Offset(iconPx / 2f, iconPx / 2f)
         settlingKey = activeKey
         settlingIcon = iconBitmap

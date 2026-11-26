@@ -349,6 +349,7 @@ fun FavouritesScreen(
     var heldKey by remember { mutableStateOf<String?>(null) }
     var draggedKey by remember { mutableStateOf<String?>(null) }
     var dragCenterPx by remember { mutableStateOf(Offset.Zero) }
+    var previewPins by remember { mutableStateOf<List<String>?>(null) }
     var hoverTargetSlot by remember { mutableIntStateOf(-1) }
     var hoverSinceMs by remember { mutableLongStateOf(0L) }
     var lastSwapMs by remember { mutableLongStateOf(0L) }
@@ -357,7 +358,9 @@ fun FavouritesScreen(
 
     val windowBounds = remember { androidx.compose.runtime.mutableStateMapOf<String, android.graphics.Rect>() }
 
-    val curPins by rememberUpdatedState(pins)
+    val displayPins = previewPins ?: pins
+    val curPins by rememberUpdatedState(displayPins)
+    val curCommittedPins by rememberUpdatedState(pins)
     val curByKey by rememberUpdatedState(byKey)
     val curEditing by rememberUpdatedState(editing)
     val curOnOpen by rememberUpdatedState(onOpen)
@@ -396,11 +399,12 @@ fun FavouritesScreen(
     }
 
     fun evaluateFavouriteSwap(activeKey: String, centerPx: Offset, forceImmediate: Boolean = false) {
-        val fromSlot = curPins.indexOf(activeKey)
+        val list = previewPins ?: curPins
+        val fromSlot = list.indexOf(activeKey)
         if (fromSlot < 0) return
         var best = -1
         var bestDist = Float.MAX_VALUE
-        for (j in curPins.indices) {
+        for (j in list.indices) {
             if (j == fromSlot) continue
             val (_, _, td) = favouriteSlots.getOrNull(j) ?: continue
             val c = slotCenterPx(j)
@@ -419,7 +423,7 @@ fun FavouritesScreen(
         val now = android.os.SystemClock.uptimeMillis()
         if (!forceImmediate && best == lastSwapSlot && (now - lastSwapMs) < 180L) return
         if (forceImmediate || bestDist <= td * px * 0.36f) {
-            curOnPins(AppOrder.swap(curPins, fromSlot, best))
+            previewPins = AppOrder.swap(list, fromSlot, best)
             lastSwapMs = now
             lastSwapSlot = fromSlot
             hoverTargetSlot = -1
@@ -431,12 +435,20 @@ fun FavouritesScreen(
             hoverTargetSlot = best
             hoverSinceMs = now
         } else if (now - hoverSinceMs >= 65L) {
-            curOnPins(AppOrder.swap(curPins, fromSlot, best))
+            previewPins = AppOrder.swap(list, fromSlot, best)
             lastSwapMs = now
             lastSwapSlot = fromSlot
             hoverTargetSlot = -1
             hoverSinceMs = 0L
             view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        }
+    }
+
+    fun commitPreviewPins() {
+        val pending = previewPins
+        previewPins = null
+        if (pending != null && pending != curCommittedPins) {
+            curOnPins(pending)
         }
     }
 
@@ -481,6 +493,7 @@ fun FavouritesScreen(
                                         if (started) {
                                             ch.consume()
                                             evaluateFavouriteSwap(hitKey, dragCenterPx, forceImmediate = true)
+                                            commitPreviewPins()
                                             view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
                                         }
                                         break
@@ -491,6 +504,7 @@ fun FavouritesScreen(
                                         started = true
                                         DragOwners.activeDrag = true
                                         pressedKey = null
+                                        previewPins = curPins
                                         draggedKey = hitKey
                                         dragCenterPx = ch.position - grabOffset
                                         view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
@@ -542,6 +556,7 @@ fun FavouritesScreen(
                                     ch.consume()
                                     if (startedDrag) {
                                         evaluateFavouriteSwap(hitKey, dragCenterPx, forceImmediate = true)
+                                        commitPreviewPins()
                                         view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
                                     } else {
                                         heldKey = null
@@ -557,6 +572,7 @@ fun FavouritesScreen(
                                 if (!startedDrag && hypot(dragAccum.x, dragAccum.y) > slop * 0.75f) {
                                     startedDrag = true
                                     heldKey = null
+                                    previewPins = curPins
                                     draggedKey = hitKey
                                     dragCenterPx = ch.position - grabOffset
                                     view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
@@ -569,6 +585,7 @@ fun FavouritesScreen(
                             DragOwners.activeDrag = false
                             pressedKey = null
                             heldKey = null
+                            previewPins = null
                             if (draggedKey == hitKey) draggedKey = null
                             hoverTargetSlot = -1
                             hoverSinceMs = 0L
@@ -577,7 +594,7 @@ fun FavouritesScreen(
                     }
                 },
             ) {
-                pins.forEachIndexed { i, appKey ->
+                displayPins.forEachIndexed { i, appKey ->
                     val app = byKey[appKey] ?: return@forEachIndexed
                     val (_, _, d) = favouriteSlots.getOrNull(i) ?: return@forEachIndexed
                     androidx.compose.runtime.key(appKey) {
@@ -658,18 +675,31 @@ fun FavouritesScreen(
             )
         }
         if (!visualJiggle && menuSlot == null) {
-            CapsuleButton(
-                text = "All Apps",
-                onClick = onAllApps,
+            androidx.compose.foundation.layout.Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = scrollBottomInset + 22.dp)
-                    .testTag("all-apps-pill")
-                    .semantics { contentDescription = "All Apps" },
-                icon = Symbols.apps,
-                height = 40.dp,
-                minWidth = 136.dp,
-            )
+                    .padding(bottom = scrollBottomInset + 22.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CapsuleButton(
+                    text = "All Apps",
+                    onClick = onAllApps,
+                    modifier = Modifier
+                        .testTag("all-apps-pill")
+                        .semantics { contentDescription = "All Apps" },
+                    icon = Symbols.apps,
+                    height = 40.dp,
+                    minWidth = 128.dp,
+                )
+                CircleButton(
+                    icon = Symbols.search,
+                    contentDescription = "Search apps and people",
+                    onClick = onSearch,
+                    modifier = Modifier.testTag("favourites-search"),
+                    size = 40.dp,
+                )
+            }
         }
         menuSlot?.let { (slot, app) ->
             val key = app.component.flattenToString()
@@ -774,6 +804,16 @@ internal fun filterApps(apps: List<App>, query: String): List<App> {
  *   - Edge-to-edge scrolling all the way behind the translucent search pill and native top status-bar clock (no opaque top block).
  *   - Contacts-style right-edge A–Z fast-scroll scrubber with haptic ticks and floating section bubble.
  */
+internal fun RecommendedPerson.toChipData() = PersonChipData(
+    id = id,
+    name = name,
+    shortName = shortName,
+    appLabel = appLabel,
+    avatar = avatar,
+    appBadge = appBadge,
+    hasUnread = hasUnread,
+)
+
 @Composable
 fun AppListScreen(
     apps: List<App>,
@@ -789,6 +829,8 @@ fun AppListScreen(
     retainScroll: () -> Boolean = { false },
     searchFocusKey: Int = 0,
     onSearchFocused: () -> Unit = {},
+    people: List<RecommendedPerson> = emptyList(),
+    onOpenPerson: (RecommendedPerson) -> Unit = {},
 ) {
     val sortedApps = remember(apps) { alphabeticalApps(apps) }
     // Preserve the viewport if Android reclaims Home behind an app. A fresh list still starts at its top.
@@ -802,9 +844,17 @@ fun AppListScreen(
     var query by remember { mutableStateOf("") }
     val trimmed = query.trim()
     val visible = remember(trimmed, sortedApps) { filterApps(sortedApps, trimmed) }
+    val matchingPeople = remember(trimmed, people, pickFor) {
+        if (pickFor != null || trimmed.isEmpty()) emptyList() else filterPeople(people, trimmed).take(5)
+    }
+    val peopleById = remember(people) { people.associateBy { it.id } }
+    val topChips = remember(people, pickFor) {
+        if (pickFor != null) emptyList() else people.take(5).map { it.toChipData() }
+    }
+    val headerCount = 1 + if (trimmed.isEmpty() && topChips.isNotEmpty()) 1 else 0
     val availableLetters = remember(sortedApps) { sortedApps.map { sectionLetter(it.label) }.toSet() }
-    val activeLetter = remember(state.firstVisibleItemIndex, visible) {
-        visible.getOrNull((state.firstVisibleItemIndex - 1).coerceAtLeast(0))?.let { sectionLetter(it.label) }
+    val activeLetter = remember(state.firstVisibleItemIndex, visible, headerCount) {
+        visible.getOrNull((state.firstVisibleItemIndex - headerCount).coerceAtLeast(0))?.let { sectionLetter(it.label) }
     }
     val px = LocalDensity.current.density
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
@@ -838,18 +888,46 @@ fun AppListScreen(
                         query = query,
                         onQueryChange = { query = it },
                         onSubmit = {
-                            visible.firstOrNull()?.let { app ->
+                            if (visible.isNotEmpty()) {
+                                val app = visible.first()
                                 val key = app.component.flattenToString()
                                 query = ""
                                 if (pickFor != null) onPicked(key) else onOpen(app.component, null)
+                            } else if (matchingPeople.isNotEmpty()) {
+                                val p = matchingPeople.first()
+                                query = ""
+                                onOpenPerson(p)
                             }
                         },
                         focusKey = searchFocusKey,
                         onFocused = onSearchFocused,
+                        placeholder = if (pickFor != null) "Search apps" else "Search apps & people",
                         modifier = Modifier
                             .padding(horizontal = 4.dp, vertical = 6.dp)
                             .testTag("app-search"),
                     )
+                }
+                if (trimmed.isEmpty() && topChips.isNotEmpty()) {
+                    item(key = "people-strip") {
+                        PeopleStrip(
+                            people = topChips,
+                            onTap = { chip -> peopleById[chip.id]?.let(onOpenPerson) },
+                            showKicker = true,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                        )
+                    }
+                }
+                if (matchingPeople.isNotEmpty()) {
+                    itemsIndexed(matchingPeople, key = { _, p -> "person-${p.id}" }) { _, person ->
+                        PersonSearchRow(
+                            person = person.toChipData(),
+                            onClick = {
+                                query = ""
+                                onOpenPerson(person)
+                            },
+                            modifier = Modifier.testTag("search-person-${person.id}"),
+                        )
+                    }
                 }
                 itemsIndexed(visible, key = { _, a -> a.component.flattenToString() }) { _, app ->
                     val key = app.component.flattenToString()
@@ -891,10 +969,10 @@ fun AppListScreen(
                         )
                     }
                 }
-                if (visible.isEmpty() && trimmed.isNotEmpty()) {
+                if (visible.isEmpty() && matchingPeople.isEmpty() && trimmed.isNotEmpty()) {
                     item(key = "no-matches") {
                         SettingsNote(
-                            "No apps matching \"$trimmed\"",
+                            "No matches for \"$trimmed\"",
                             Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
                         )
                     }
@@ -915,7 +993,7 @@ fun AppListScreen(
                     availableLetters = availableLetters,
                     onScrubLetter = { letter ->
                         firstIndexForSection(visible, letter)?.let { targetIdx ->
-                            scope.launch { state.scrollToItem(targetIdx + 1) }
+                            scope.launch { state.scrollToItem(targetIdx + headerCount) }
                         }
                     },
                     modifier = Modifier
@@ -952,6 +1030,8 @@ fun AppGridScreen(
     onOpen: (ComponentName, android.graphics.Rect?) -> Unit,
     searchFocusKey: Int = 0,
     onSearchFocused: () -> Unit = {},
+    people: List<RecommendedPerson> = emptyList(),
+    onOpenPerson: (RecommendedPerson) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val byKey = remember(apps) { apps.associateBy { it.component.flattenToString() } }
@@ -962,24 +1042,45 @@ fun AppGridScreen(
     val matches = remember(trimmed, shown) {
         if (trimmed.isEmpty()) emptyList() else filterApps(shown, trimmed)
     }
+    val matchingPeople = remember(trimmed, people) {
+        if (trimmed.isEmpty()) emptyList() else filterPeople(people, trimmed).take(5)
+    }
+    val peopleById = remember(people) { people.associateBy { it.id } }
+    val topChips = remember(people) { people.take(5).map { it.toChipData() } }
     androidx.activity.compose.BackHandler(enabled = menuApp != null) { menuApp = null }
     androidx.activity.compose.BackHandler(enabled = menuApp == null && query.isNotEmpty()) { query = "" }
     val searchHeader: @Composable () -> Unit = {
-        AppSearchBar(
-            query = query,
-            onQueryChange = { query = it },
-            onSubmit = {
-                matches.firstOrNull()?.let { app ->
-                    query = ""
-                    onOpen(app.component, null)
-                }
-            },
-            focusKey = searchFocusKey,
-            onFocused = onSearchFocused,
-            modifier = Modifier
-                .padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 12.dp)
-                .testTag("app-search"),
-        )
+        androidx.compose.foundation.layout.Column(
+            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 10.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+        ) {
+            AppSearchBar(
+                query = query,
+                onQueryChange = { query = it },
+                onSubmit = {
+                    if (matches.isNotEmpty()) {
+                        val app = matches.first()
+                        query = ""
+                        onOpen(app.component, null)
+                    } else if (matchingPeople.isNotEmpty()) {
+                        val p = matchingPeople.first()
+                        query = ""
+                        onOpenPerson(p)
+                    }
+                },
+                focusKey = searchFocusKey,
+                onFocused = onSearchFocused,
+                placeholder = "Search apps & people",
+                modifier = Modifier.testTag("app-search"),
+            )
+            if (trimmed.isEmpty() && topChips.isNotEmpty()) {
+                PeopleStrip(
+                    people = topChips,
+                    onTap = { chip -> peopleById[chip.id]?.let(onOpenPerson) },
+                    modifier = Modifier.testTag("grid-people-strip"),
+                )
+            }
+        }
     }
     Backdrop(Modifier.testTag("app-grid")) {
         if (shown.isEmpty()) return@Backdrop
@@ -1003,6 +1104,18 @@ fun AppGridScreen(
                 headerScrollKey = searchFocusKey,
                 overrideBody = if (trimmed.isEmpty()) null else {
                     {
+                        if (matchingPeople.isNotEmpty()) {
+                            itemsIndexed(matchingPeople, key = { _, p -> "person-${p.id}" }) { _, person ->
+                                PersonSearchRow(
+                                    person = person.toChipData(),
+                                    onClick = {
+                                        query = ""
+                                        onOpenPerson(person)
+                                    },
+                                    modifier = Modifier.padding(horizontal = 20.dp).testTag("search-person-${person.id}"),
+                                )
+                            }
+                        }
                         itemsIndexed(matches, key = { _, a -> a.component.flattenToString() }) { _, app ->
                             AppSearchRow(
                                 label = app.label,
@@ -1014,10 +1127,10 @@ fun AppGridScreen(
                                 modifier = Modifier.padding(horizontal = 20.dp).testTag("search-hit-${app.component.flattenToString()}"),
                             )
                         }
-                        if (matches.isEmpty()) {
+                        if (matches.isEmpty() && matchingPeople.isEmpty()) {
                             item(key = "no-matches") {
                                 SettingsNote(
-                                    "No apps matching \"$trimmed\"",
+                                    "No matches for \"$trimmed\"",
                                     Modifier.padding(horizontal = 32.dp, vertical = 16.dp),
                                 )
                             }

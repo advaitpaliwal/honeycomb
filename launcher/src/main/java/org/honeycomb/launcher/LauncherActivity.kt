@@ -162,12 +162,19 @@ class LauncherActivity : ComponentActivity() {
                     val alphabeticalOrder = remember(all) { alphabeticalApps(all).map { it.component.flattenToString() } }
                     var grid by remember { mutableStateOf(AppOrder.savedGrid(this, tall())) }
                     var ranking by remember { mutableStateOf(ContextualRanking(emptyList(), emptyMap())) }
+                    var people by remember { mutableStateOf<List<RecommendedPerson>>(emptyList()) }
                     val resumeTick = FaceTick.resumes.value
                     val notifTick by MediaListener.Defaults.posted.collectAsState()
                     LaunchedEffect(space.depth, resumeTick, notifTick) {
                         if (space.depth == Depth.Favourites || space.depth == Depth.Face || ranking.ordered.isEmpty()) {
                             ranking = withContext(Dispatchers.IO) { contextualPackages(this@LauncherActivity) }
                         }
+                        people = withContext(Dispatchers.IO) { RecommendedPeople.load(this@LauncherActivity) }
+                    }
+                    fun openPerson(person: RecommendedPerson) {
+                        hideKeyboard()
+                        inFront = false
+                        RecommendedPeople.open(this@LauncherActivity, person)
                     }
                     val used = ranking.ordered
                     val prevShownRef = remember { arrayOf(emptyList<String>()) }
@@ -283,6 +290,8 @@ class LauncherActivity : ComponentActivity() {
                                         SmartStack(
                                             onTop = { top -> if (space.stackTop != top) space = space.copy(stackTop = top) },
                                             onOpenMedia = { m -> openMedia(this@LauncherActivity, m) },
+                                            people = people,
+                                            onOpenPerson = ::openPerson,
                                         )
                                     },
                                 )
@@ -325,6 +334,8 @@ class LauncherActivity : ComponentActivity() {
                                         onOpen = ::open,
                                         searchFocusKey = searchFocusKey,
                                         onSearchFocused = { searchFocusKey = 0 },
+                                        people = people,
+                                        onOpenPerson = ::openPerson,
                                     ) else AppListScreen(
                                         apps = all,
                                         order = alphabeticalOrder,
@@ -344,6 +355,8 @@ class LauncherActivity : ComponentActivity() {
                                         retainScroll = { launched != null },
                                         searchFocusKey = searchFocusKey,
                                         onSearchFocused = { searchFocusKey = 0 },
+                                        people = people,
+                                        onOpenPerson = ::openPerson,
                                     )
                                 }
                             },

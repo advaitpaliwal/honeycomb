@@ -86,19 +86,44 @@ fun installedApps(ctx: Context): List<App> {
     val pm = ctx.packageManager
     val px = iconPx(ctx)
     val themed = IconTheme.colours(ctx)
-    return pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
-        .filter { !isInternal(it.activityInfo.packageName) } // the home itself never lists
-        .map {
-            val art = fullResIcon(pm, it.activityInfo) ?: it.loadIcon(pm)
-            val crop = planIcon(art)
-            App(
-                it.loadLabel(pm).toString(),
-                ComponentName(it.activityInfo.packageName, it.activityInfo.name),
-                // a hardware bitmap lives in graphics memory, so the full grid's first frame draws ~145 icons without
-                // uploading each as a texture again (about 12 ms of a 30 ms frame on the emulator, perf round 2)
-                circleIcon(art, px, crop, themed).let { it.copy(Bitmap.Config.HARDWARE, false) ?: it }.asImageBitmap(),
-            )
+    val seen = LinkedHashMap<ComponentName, App>()
+
+    // 1. Primary user launchable activities
+    pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+        .filter { !isInternal(it.activityInfo.packageName) }
+        .forEach { ri ->
+            val comp = ComponentName(ri.activityInfo.packageName, ri.activityInfo.name)
+            if (comp !in seen) {
+                val art = fullResIcon(pm, ri.activityInfo) ?: ri.loadIcon(pm)
+                val crop = planIcon(art)
+                seen[comp] = App(
+                    ri.loadLabel(pm).toString(),
+                    comp,
+                    circleIcon(art, px, crop, themed).let { it.copy(Bitmap.Config.HARDWARE, false) ?: it }.asImageBitmap(),
+                )
+            }
         }
+
+    // 2. Also include any launchable apps from secondary/work profiles via LauncherApps
+    runCatching {
+        val la = ctx.getSystemService(android.content.pm.LauncherApps::class.java)
+        la?.profiles?.forEach { profile ->
+            la.getActivityList(null, profile).forEach { info ->
+                val comp = info.componentName
+                if (!isInternal(comp.packageName) && comp !in seen) {
+                    val art = info.getIcon(android.util.DisplayMetrics.DENSITY_XXXHIGH)
+                    val crop = planIcon(art)
+                    seen[comp] = App(
+                        info.label.toString(),
+                        comp,
+                        circleIcon(art, px, crop, themed).let { it.copy(Bitmap.Config.HARDWARE, false) ?: it }.asImageBitmap(),
+                    )
+                }
+            }
+        }
+    }
+
+    return seen.values
         .sortedWith(compareBy({ first.indexOf(it.component.packageName).let { i -> if (i < 0) Int.MAX_VALUE else i } }, { it.label.lowercase() }))
 }
 

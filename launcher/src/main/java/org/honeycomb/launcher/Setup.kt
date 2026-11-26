@@ -51,7 +51,7 @@ enum class Step(val title: String, val body: String, val button: String) {
     Home("Make Honeycomb\nyour home", "Going home always brings you back to Honeycomb.", "Set as home"),
     Navigation("Go home", "Swipe up on the line to go home: turn on gesture navigation", "Open settings"),
     Notifications("See your\nnotifications", "Honeycomb shows your notifications and what is playing.", "Turn on"),
-    Quiet("Quiet", "Quiet will be on: only calls from your contacts and alarms ring. Turn it off any time in Control Centre.", "Turn on"),
+    Quiet("Quiet", "Quiet will be on: calls from your contacts, repeat callers, and alarms still ring. Turn it off any time in Control Centre.", "Turn on"),
     Usage("Your apps", "Usage access lets Honeycomb show the apps you use most and the ones you opened last.", "Turn on"),
     Brightness("Brightness", "Lets the brightness slider in Control Centre set your screen's brightness.", "Turn on"),
 }

@@ -1572,3 +1572,172 @@ fun BlockedDomainRow(
         }
     }
 }
+
+/** UI model for a single recommended contact chip/row inside `design/`. */
+data class PersonChipData(
+    val id: String,
+    val name: String,
+    val shortName: String,
+    val appLabel: String,
+    val avatar: androidx.compose.ui.graphics.ImageBitmap?,
+    val appBadge: androidx.compose.ui.graphics.ImageBitmap?,
+    val hasUnread: Boolean,
+)
+
+/** Compact circular avatar with monogram fallback, unread accent ring, and tiny app badge. */
+@Composable
+fun PersonAvatar(
+    person: PersonChipData,
+    size: Dp = 48.dp,
+    modifier: Modifier = Modifier,
+) {
+    val initialStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+        fontSize = if (size >= 44.dp) 18.sp else 15.sp,
+        lineHeight = if (size >= 44.dp) 22.sp else 18.sp,
+        color = HoneycombColors.contentFor(HoneycombColors.tonal),
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+    val initials = remember(person.name) {
+        val parts = person.name.trim().split(' ').filter { it.isNotEmpty() }
+        when {
+            parts.size >= 2 -> "${parts[0].first().uppercaseChar()}${parts[1].first().uppercaseChar()}"
+            parts.size == 1 -> parts[0].take(2).uppercase()
+            else -> "?"
+        }
+    }
+    Box(modifier.size(size)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .then(
+                    if (person.hasUnread) Modifier.border(2.dp, HoneycombColors.accent, Circle).padding(2.5.dp)
+                    else Modifier,
+                )
+                .clip(Circle)
+                .background(HoneycombColors.tonal),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (person.avatar != null) {
+                androidx.compose.foundation.Image(person.avatar, null, Modifier.fillMaxSize())
+            } else {
+                BasicText(initials, style = initialStyle, maxLines = 1)
+            }
+        }
+        if (person.appBadge != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(18.dp)
+                    .clip(Circle)
+                    .background(HoneycombColors.background)
+                    .padding(1.5.dp)
+                    .clip(Circle),
+            ) {
+                androidx.compose.foundation.Image(person.appBadge, null, Modifier.fillMaxSize())
+            }
+        }
+    }
+}
+
+/**
+ * Horizontal strip of recommended frequent contacts ("People"): 48 dp circular avatars with tiny app badges
+ * and crisp first-name labels. 1 tap launches straight into that exact chat thread.
+ */
+@Composable
+fun PeopleStrip(
+    people: List<PersonChipData>,
+    onTap: (PersonChipData) -> Unit,
+    modifier: Modifier = Modifier,
+    showKicker: Boolean = false,
+) {
+    if (people.isEmpty()) return
+    val kickerStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+        fontSize = 11.sp,
+        lineHeight = 14.sp,
+        color = HoneycombColors.secondaryLabel,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+    val nameStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        fontSize = 11.sp,
+        lineHeight = 14.sp,
+        color = HoneycombColors.label,
+        textAlign = TextAlign.Center,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (showKicker) {
+            BasicText("PEOPLE", style = kickerStyle, modifier = Modifier.padding(horizontal = 4.dp))
+        }
+        androidx.compose.foundation.layout.Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.Top,
+        ) {
+            people.take(5).forEach { person ->
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .clip(rounded(12.dp))
+                        .clickable(role = Role.Button) { onTap(person) }
+                        .padding(vertical = 4.dp, horizontal = 2.dp)
+                        .testTag("person-chip-${person.id}")
+                        .semantics { contentDescription = "${person.name} on ${person.appLabel}" },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    PersonAvatar(person, size = 46.dp)
+                    BasicText(
+                        person.shortName,
+                        style = nameStyle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Spotlight search hit row for a recommended person (1 tap opens their exact conversation thread). */
+@Composable
+fun PersonSearchRow(
+    person: PersonChipData,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val subStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        color = if (person.hasUnread) HoneycombColors.accent else HoneycombColors.secondaryLabel,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+    androidx.compose.foundation.layout.Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .semantics { contentDescription = "${person.name} on ${person.appLabel}" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        PersonAvatar(person, size = 40.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            BasicText(person.name, style = AppRowLabelStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(
+                if (person.hasUnread) "${person.appLabel} · New message" else person.appLabel,
+                style = subStyle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
