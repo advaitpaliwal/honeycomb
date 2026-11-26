@@ -167,10 +167,63 @@ object FeedSwitches {
     fun isCustomAppBlocked(ctx: Context, pkg: String): Boolean = pkg in customBlockedApps(ctx)
 
     fun setCustomAppBlocked(ctx: Context, pkg: String, blocked: Boolean) {
-        if (pkg in PROTECTED_PACKAGES || pkg in MESSAGING_PACKAGES) return
+        if (pkg in PROTECTED_PACKAGES) return
         val next = HashSet(customBlockedApps(ctx))
         if (blocked) next.add(pkg) else next.remove(pkg)
         prefs(ctx).edit().putStringSet("custom.blocked", next).apply()
+    }
+
+    /** Pre-created app category blocks (Dating, Social Media, Games, Video & Streaming, Shopping, News & Sports). */
+    fun appCategoryBlocked(ctx: Context, categoryId: String): Boolean =
+        prefs(ctx).getBoolean("app.cat.$categoryId", false)
+
+    fun setAppCategoryBlocked(ctx: Context, categoryId: String, blocked: Boolean) {
+        prefs(ctx).edit().putBoolean("app.cat.$categoryId", blocked).apply()
+    }
+
+    fun enabledAppCategoryIds(ctx: Context): Set<String> =
+        APP_CATEGORIES.filter { appCategoryBlocked(ctx, it.id) }.map { it.id }.toSet()
+
+    fun appCategoryExcluded(ctx: Context, categoryId: String): Set<String> =
+        prefs(ctx).getStringSet("app.cat.$categoryId.excluded", emptySet())?.toSet().orEmpty()
+
+    fun setAppCategoryExcluded(ctx: Context, categoryId: String, pkg: String, excluded: Boolean) {
+        val next = HashSet(appCategoryExcluded(ctx, categoryId))
+        if (excluded) next.add(pkg) else next.remove(pkg)
+        prefs(ctx).edit().putStringSet("app.cat.$categoryId.excluded", next).apply()
+    }
+
+    fun appCategoryAdded(ctx: Context, categoryId: String): Set<String> =
+        prefs(ctx).getStringSet("app.cat.$categoryId.added", emptySet())?.toSet().orEmpty()
+
+    fun addAppToCategory(ctx: Context, categoryId: String, pkg: String) {
+        if (pkg in PROTECTED_PACKAGES) return
+        setAppCategoryExcluded(ctx, categoryId, pkg, excluded = false)
+        val cat = APP_CATEGORIES.firstOrNull { it.id == categoryId }
+        if (cat != null && pkg in cat.packages) return
+        val next = HashSet(appCategoryAdded(ctx, categoryId)).apply { add(pkg) }
+        prefs(ctx).edit().putStringSet("app.cat.$categoryId.added", next).apply()
+    }
+
+    fun removeAppFromCategory(ctx: Context, categoryId: String, pkg: String) {
+        val next = HashSet(appCategoryAdded(ctx, categoryId)).apply { remove(pkg) }
+        prefs(ctx).edit().putStringSet("app.cat.$categoryId.added", next).apply()
+    }
+
+    /** True when [pkg] is blocked by any enabled pre-created app category (including newly installed apps). */
+    fun isAppBlockedByCategory(ctx: Context, pkg: String): Boolean {
+        if (pkg in PROTECTED_PACKAGES) return false
+        val enabled = APP_CATEGORIES.filter { appCategoryBlocked(ctx, it.id) }
+        if (enabled.isEmpty()) return false
+        val androidCat = runCatching {
+            val info = ctx.packageManager.getApplicationInfo(pkg, 0)
+            @Suppress("DEPRECATION")
+            val isLegacyGame = (info.flags and android.content.pm.ApplicationInfo.FLAG_IS_GAME) != 0
+            if (isLegacyGame && info.category == android.content.pm.ApplicationInfo.CATEGORY_UNDEFINED) 0 else info.category
+        }.getOrDefault(-1)
+        return enabled.any { cat ->
+            matchesAppCategory(pkg, androidCat, cat, appCategoryExcluded(ctx, cat.id), appCategoryAdded(ctx, cat.id))
+        }
     }
 
     /** Optional 5-second breathing pause before opening social apps (off by default so blocking stays seamless). */
@@ -203,12 +256,13 @@ object FeedSwitches {
             .apply()
     }
 
-    /** The live rule for [pkg] built from custom app blocks or per-feature toggles, or null if nothing is blocked. */
+    /** The live rule for [pkg] built from custom app blocks, app categories, or per-feature toggles, or null if nothing is blocked. */
     fun activeRule(ctx: Context, pkg: String): AppRule? {
-        if (pkg in PROTECTED_PACKAGES || pkg in MESSAGING_PACKAGES) return null
-        if (isCustomAppBlocked(ctx, pkg)) {
+        if (pkg in PROTECTED_PACKAGES) return null
+        if (isCustomAppBlocked(ctx, pkg) || isAppBlockedByCategory(ctx, pkg)) {
             return AppRule(pkg, pkg, "Blocked", "home", listOf("*"))
         }
+        if (pkg in MESSAGING_PACKAGES) return null
         val base = ruleFor(pkg) ?: return null
         if (base.features.isEmpty()) return base.takeIf { blocking(ctx, base.packageName) }
         val on = base.features.filter { featureBlocked(ctx, base.packageName, it) }.map { it.id }.toSet()

@@ -248,4 +248,25 @@ class FeedRulesTest {
         assertEquals('#', sectionLetter("1Password"))
         assertEquals('#', sectionLetter(""))
     }
+
+    @Test fun preCreatedAppAndWebsiteCategoriesCoverDatingGamesAndCustomOverrides() {
+        val dating = APP_CATEGORIES.first { it.id == "dating" }
+        assertTrue(matchesAppCategory("co.hinge.app", -1, dating))
+        assertTrue(matchesAppCategory("com.tinder", -1, dating))
+        assertTrue(matchesAppCategory("com.bumble.app", -1, dating))
+        assertFalse(matchesAppCategory("co.hinge.app", -1, dating, excluded = setOf("co.hinge.app")))
+        assertTrue(matchesAppCategory("com.custom.dating", -1, dating, added = setOf("com.custom.dating")))
+        assertFalse(matchesAppCategory("org.honeycomb.launcher", -1, dating, added = setOf("org.honeycomb.launcher")))
+
+        // Games category automatically classifies any Android CATEGORY_GAME (0) app
+        val games = APP_CATEGORIES.first { it.id == "games" }
+        assertTrue(matchesAppCategory("com.any.indie.game", androidCat = 0, games))
+        assertFalse(matchesAppCategory("com.any.indie.game", androidCat = 0, games, excluded = setOf("com.any.indie.game")))
+
+        // Dating & Shopping website categories
+        assertTrue(isWebsiteBlocked("https://tinder.com/app/recs", false, setOf("dating"), emptySet()))
+        assertTrue(isWebsiteBlocked("https://hinge.co/", false, setOf("dating"), emptySet()))
+        assertTrue(isWebsiteBlocked("https://www.temu.com/deals", false, setOf("shopping"), emptySet()))
+        assertFalse(isWebsiteBlocked("https://hinge.co/", false, setOf("shopping"), emptySet()))
+    }
 }

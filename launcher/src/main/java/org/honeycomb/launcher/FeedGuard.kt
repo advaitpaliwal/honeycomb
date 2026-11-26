@@ -78,7 +78,9 @@ class FeedGuard : AccessibilityService() {
         val windowChanged = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         if (windowChanged) arrived(pkg, event.className?.toString(), event)
         if (pkg in PROTECTED_PACKAGES) return
-        if (pkg in BROWSER_PACKAGES && FeedSwitches.hasActiveBrowserRules(this) && !FeedSwitches.isCustomAppBlocked(this, pkg)) {
+        if (pkg in BROWSER_PACKAGES && FeedSwitches.hasActiveBrowserRules(this) &&
+            !FeedSwitches.isCustomAppBlocked(this, pkg) && !FeedSwitches.isAppBlockedByCategory(this, pkg)
+        ) {
             if (windowChanged || event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
                 pendingBrowserPkg = pkg
                 handler.removeCallbacks(browserCheck)
@@ -94,7 +96,7 @@ class FeedGuard : AccessibilityService() {
     private fun arrived(pkg: String, cls: String?, event: AccessibilityEvent? = null) {
         if (pkg == packageName && cls != LauncherActivity::class.java.name) return
         if (pkg == "com.android.systemui" || pkg in keyboards || pkg == foreground) return
-        if (ruleFor(pkg) == null && !FeedSwitches.isCustomAppBlocked(this, pkg) &&
+        if (ruleFor(pkg) == null && !FeedSwitches.isCustomAppBlocked(this, pkg) && !FeedSwitches.isAppBlockedByCategory(this, pkg) &&
             packageManager.getLaunchIntentForPackage(pkg) == null && !isHome(pkg)
         ) return
         foreground = pkg

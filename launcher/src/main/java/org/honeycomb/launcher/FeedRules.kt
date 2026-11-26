@@ -142,6 +142,27 @@ val WEBSITE_CATEGORIES = listOf(
         defaultBlocked = false,
     ),
     WebsiteCategory(
+        id = "dating",
+        label = "Dating",
+        description = "Tinder, Bumble, Hinge, Grindr, Feeld, OkCupid, Match, Badoo, POF",
+        domains = setOf(
+            "tinder.com", "bumble.com", "hinge.co", "grindr.com", "feeld.co",
+            "okcupid.com", "match.com", "badoo.com", "pof.com", "coffeemeetsbagel.com",
+            "boo.world", "happn.com",
+        ),
+        defaultBlocked = false,
+    ),
+    WebsiteCategory(
+        id = "shopping",
+        label = "Shopping",
+        description = "Amazon, Temu, Shein, eBay, AliExpress, Etsy, Depop, StockX",
+        domains = setOf(
+            "amazon.com", "temu.com", "shein.com", "ebay.com", "aliexpress.com",
+            "etsy.com", "depop.com", "stockx.com", "poshmark.com",
+        ),
+        defaultBlocked = false,
+    ),
+    WebsiteCategory(
         id = "streaming",
         label = "Streaming & Entertainment",
         description = "Twitch, Kick, Netflix, 9GAG, Imgur",
@@ -149,6 +170,166 @@ val WEBSITE_CATEGORIES = listOf(
         defaultBlocked = false,
     ),
 )
+
+/**
+ * One pre-created app category in Block -> Blocked apps (e.g. Dating, Social Media, Games, Shopping).
+ * Matches both curated [packages] (so newly downloaded apps in the category are blocked automatically)
+ * and Android's OS-level [androidCategory] (`ApplicationInfo.CATEGORY_*`) when set.
+ */
+data class AppCategory(
+    val id: String,
+    val label: String,
+    val description: String,
+    /** Curated `packageName -> human label` covered by this category even before install. */
+    val packages: Map<String, String>,
+    /** Android `ApplicationInfo.CATEGORY_*` value (0=GAME, 2=VIDEO, 4=SOCIAL, 5=NEWS), or -1 if curated-only. */
+    val androidCategory: Int = -1,
+)
+
+val APP_CATEGORIES = listOf(
+    AppCategory(
+        id = "dating",
+        label = "Dating",
+        description = "Tinder, Bumble, Hinge, Grindr, Feeld, OkCupid, Badoo, Match & more",
+        packages = linkedMapOf(
+            "com.tinder" to "Tinder",
+            "com.bumble.app" to "Bumble",
+            "co.hinge.app" to "Hinge",
+            "com.grindrapp.android" to "Grindr",
+            "co.feeld" to "Feeld",
+            "com.okcupid.okcupid" to "OkCupid",
+            "com.badoo.mobile" to "Badoo",
+            "com.coffeemeetsbagel" to "Coffee Meets Bagel",
+            "com.match.android.matchmobile" to "Match",
+            "com.pof.android" to "Plenty of Fish",
+            "enterprises.dating.boo" to "Boo",
+            "com.dilmil.app" to "Dil Mil",
+            "com.ftw_and_co.happn" to "Happn",
+            "com.chispa.app" to "Chispa",
+            "com.blk.app" to "BLK",
+            "com.weareher.her" to "HER",
+        ),
+    ),
+    AppCategory(
+        id = "social",
+        label = "Social Media",
+        description = "Instagram, TikTok, X, Snapchat, Reddit, Facebook, Threads, Bluesky",
+        packages = linkedMapOf(
+            "com.instagram.android" to "Instagram",
+            "com.instagram.lite" to "Instagram Lite",
+            "com.zhiliaoapp.musically" to "TikTok",
+            "com.ss.android.ugc.trill" to "TikTok",
+            "com.twitter.android" to "X",
+            "com.snapchat.android" to "Snapchat",
+            "com.reddit.frontpage" to "Reddit",
+            "com.facebook.katana" to "Facebook",
+            "com.facebook.lite" to "Facebook Lite",
+            "com.instagram.barcelona" to "Threads",
+            "xyz.blueskyweb.app" to "Bluesky",
+            "com.linkedin.android" to "LinkedIn",
+            "com.pinterest" to "Pinterest",
+            "com.tumblr" to "Tumblr",
+            "com.bereal.ft" to "BeReal",
+            "com.bd.nproject" to "Lemon8",
+        ),
+        androidCategory = 4, // ApplicationInfo.CATEGORY_SOCIAL
+    ),
+    AppCategory(
+        id = "games",
+        label = "Games",
+        description = "All installed Android games plus Roblox, Chess, Clash Royale & more",
+        packages = linkedMapOf(
+            "com.roblox.client" to "Roblox",
+            "com.mojang.minecraftpe" to "Minecraft",
+            "com.supercell.clashroyale" to "Clash Royale",
+            "com.supercell.brawlstars" to "Brawl Stars",
+            "com.supercell.clashofclans" to "Clash of Clans",
+            "com.miHoYo.GenshinImpact" to "Genshin Impact",
+            "com.nianticlabs.pokemongo" to "Pokémon GO",
+            "com.chess" to "Chess.com",
+            "com.nytimes.crossword" to "NYT Games",
+            "com.kiloo.subwaysurf" to "Subway Surfers",
+            "com.king.candycrushsaga" to "Candy Crush",
+            "com.innersloth.spacemafia" to "Among Us",
+        ),
+        androidCategory = 0, // ApplicationInfo.CATEGORY_GAME
+    ),
+    AppCategory(
+        id = "video",
+        label = "Video & Streaming",
+        description = "YouTube, Netflix, Twitch, Disney+, Prime Video, Hulu, Max, Kick",
+        packages = linkedMapOf(
+            "com.google.android.youtube" to "YouTube",
+            "com.netflix.mediaclient" to "Netflix",
+            "tv.twitch.android.app" to "Twitch",
+            "com.amazon.avod.thirdpartyclient" to "Prime Video",
+            "com.disney.disneyplus" to "Disney+",
+            "com.hulu.plus" to "Hulu",
+            "com.wbd.stream" to "Max",
+            "com.peacocktv.peacockandroid" to "Peacock",
+            "com.kick.mobile" to "Kick",
+            "com.crunchyroll.crunchyroid" to "Crunchyroll",
+            "com.tubitv" to "Tubi",
+        ),
+        androidCategory = 2, // ApplicationInfo.CATEGORY_VIDEO
+    ),
+    AppCategory(
+        id = "shopping",
+        label = "Shopping",
+        description = "Amazon, Temu, Shein, eBay, AliExpress, Etsy, Depop, DoorDash",
+        packages = linkedMapOf(
+            "com.amazon.mShop.android.shopping" to "Amazon Shopping",
+            "com.einnovation.temu" to "Temu",
+            "com.zzkko" to "SHEIN",
+            "com.ebay.mobile" to "eBay",
+            "com.alibaba.aliexpresshd" to "AliExpress",
+            "com.etsy.android" to "Etsy",
+            "com.target.ui" to "Target",
+            "com.walmart.android" to "Walmart",
+            "com.depop" to "Depop",
+            "com.stockx.stockx" to "StockX",
+            "com.poshmark.app" to "Poshmark",
+            "com.dd.doordash" to "DoorDash",
+            "com.ubercab.eats" to "Uber Eats",
+        ),
+    ),
+    AppCategory(
+        id = "news",
+        label = "News & Sports",
+        description = "Substack, NYTimes, ESPN, Flipboard, BBC, CNN, Bleacher Report",
+        packages = linkedMapOf(
+            "com.substack.app" to "Substack",
+            "com.nytimes.android" to "NYTimes",
+            "com.espn.score_center" to "ESPN",
+            "com.bleacherreport.android.teamstream" to "Bleacher Report",
+            "flipboard.app" to "Flipboard",
+            "bbc.mobile.news.ww" to "BBC News",
+            "com.cnn.mobile.android.phone" to "CNN",
+            "com.devhd.feedly" to "Feedly",
+        ),
+        androidCategory = 5, // ApplicationInfo.CATEGORY_NEWS
+    ),
+)
+
+/**
+ * Pure matcher for whether [pkg] (with optional Android `ApplicationInfo.category` [androidCat]) is covered by
+ * [category], respecting per-category user [excluded] and [added] overrides and never matching [PROTECTED_PACKAGES].
+ */
+fun matchesAppCategory(
+    pkg: String,
+    androidCat: Int,
+    category: AppCategory,
+    excluded: Set<String> = emptySet(),
+    added: Set<String> = emptySet(),
+): Boolean {
+    if (pkg in PROTECTED_PACKAGES) return false
+    if (pkg in excluded) return false
+    if (pkg in added) return true
+    if (pkg in category.packages) return true
+    if (category.id == "video" && isModdedYoutubePackage(pkg)) return true
+    if (category.androidCategory >= 0 && androidCat == category.androidCategory && pkg !in MESSAGING_PACKAGES) return true
+    return false
+}
 
 /** Omnibox / toolbar URL text view IDs across Chromium, Gecko/Firefox, Samsung Internet, DuckDuckGo, and Brave. */
 val BROWSER_URL_IDS = listOf(

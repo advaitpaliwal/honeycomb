@@ -131,7 +131,12 @@ private fun PauseScreen(label: String, onOpen: () -> Unit, onNotNow: () -> Unit)
 /** The breathing circle's largest size. */
 private val BREATH_SIZE = ControlSize.xLarge * 3
 
-private data class BlockableApp(val packageName: String, val label: String, val icon: ImageBitmap?)
+private data class BlockableApp(
+    val packageName: String,
+    val label: String,
+    val icon: ImageBitmap?,
+    val androidCategory: Int = -1,
+)
 
 /**
  * Honeycomb Block: clean Apple Screen Time / Opal-style distraction blocker organized into three focused views:
@@ -172,6 +177,22 @@ class FeedsActivity : ComponentActivity() {
                     },
                     onToggleCustomApp = { pkg, on ->
                         FeedSwitches.setCustomAppBlocked(this@FeedsActivity, pkg, on)
+                        tick++
+                    },
+                    onToggleAppCategory = { catId, on ->
+                        FeedSwitches.setAppCategoryBlocked(this@FeedsActivity, catId, on)
+                        tick++
+                    },
+                    onToggleAppCategoryExcluded = { catId, pkg, excluded ->
+                        FeedSwitches.setAppCategoryExcluded(this@FeedsActivity, catId, pkg, excluded)
+                        tick++
+                    },
+                    onAddAppToCategory = { catId, pkg ->
+                        FeedSwitches.addAppToCategory(this@FeedsActivity, catId, pkg)
+                        tick++
+                    },
+                    onRemoveAppFromCategory = { catId, pkg ->
+                        FeedSwitches.removeAppFromCategory(this@FeedsActivity, catId, pkg)
                         tick++
                     },
                     onToggleWebCategory = { catId, on ->
@@ -233,26 +254,46 @@ class FeedsActivity : ComponentActivity() {
         }
         .sortedByDescending { it.second }
 
-    /** All launchable apps on the phone (with real circular icons), excluding protected & messaging apps. */
+    private fun resolveAndroidCategory(pkg: String): Int = runCatching {
+        val info = packageManager.getApplicationInfo(pkg, 0)
+        @Suppress("DEPRECATION")
+        val legacyGame = (info.flags and android.content.pm.ApplicationInfo.FLAG_IS_GAME) != 0
+        if (legacyGame && info.category == android.content.pm.ApplicationInfo.CATEGORY_UNDEFINED) 0 else info.category
+    }.getOrDefault(-1)
+
+    /**
+     * Every launchable app on the phone (across AppCache, all LauncherApps profiles, and PackageManager launcher
+     * queries), excluding ONLY system-protected packages so no installed app ever goes missing from Block.
+     */
     private fun customAppCandidates(cached: List<App>): List<BlockableApp> {
-        if (cached.isNotEmpty()) {
-            return alphabeticalApps(cached)
-                .distinctBy { it.component.packageName }
-                .filter { app ->
-                    val pkg = app.component.packageName
-                    pkg != packageName && pkg !in PROTECTED_PACKAGES && pkg !in MESSAGING_PACKAGES
-                }
-                .map { BlockableApp(it.component.packageName, it.label, it.icon) }
+        val map = LinkedHashMap<String, BlockableApp>()
+        for (app in cached) {
+            val pkg = app.component.packageName
+            if (pkg == packageName || pkg in PROTECTED_PACKAGES) continue
+            map.putIfAbsent(pkg, BlockableApp(pkg, app.label, app.icon, resolveAndroidCategory(pkg)))
         }
-        return runCatching {
-            val la = getSystemService(LauncherApps::class.java) ?: return emptyList()
-            la.getActivityList(null, Process.myUserHandle())
-                .map { it.applicationInfo.packageName to it.label.toString() }
-                .distinctBy { it.first }
-                .filter { (pkg, _) -> pkg != packageName && pkg !in PROTECTED_PACKAGES && pkg !in MESSAGING_PACKAGES }
-                .map { (pkg, label) -> BlockableApp(pkg, label, loadFallbackIcon(pkg)) }
-                .sortedBy { it.label.lowercase() }
-        }.getOrDefault(emptyList())
+        runCatching {
+            val la = getSystemService(LauncherApps::class.java)
+            if (la != null) {
+                for (profile in la.profiles) {
+                    for (act in la.getActivityList(null, profile)) {
+                        val pkg = act.applicationInfo.packageName
+                        if (pkg == packageName || pkg in PROTECTED_PACKAGES || pkg in map) continue
+                        map[pkg] = BlockableApp(pkg, act.label.toString(), loadFallbackIcon(pkg), resolveAndroidCategory(pkg))
+                    }
+                }
+            }
+        }
+        runCatching {
+            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            for (ri in packageManager.queryIntentActivities(intent, 0)) {
+                val pkg = ri.activityInfo?.packageName ?: continue
+                if (pkg == packageName || pkg in PROTECTED_PACKAGES || pkg in map) continue
+                val label = runCatching { ri.loadLabel(packageManager).toString() }.getOrDefault(pkg)
+                map[pkg] = BlockableApp(pkg, label, loadFallbackIcon(pkg), resolveAndroidCategory(pkg))
+            }
+        }
+        return map.values.sortedWith(compareBy({ it.label.trim().lowercase() }, { it.packageName }))
     }
 
 private sealed interface BlockRoute {
@@ -260,6 +301,7 @@ private sealed interface BlockRoute {
     data class AppDetail(val label: String, val fromMore: Boolean = false) : BlockRoute
     data object MoreFeeds : BlockRoute
     data object Apps : BlockRoute
+    data class AppCategoryDetail(val categoryId: String) : BlockRoute
     data object Websites : BlockRoute
     data class WebsiteCategoryDetail(val categoryId: String) : BlockRoute
 }
@@ -280,6 +322,8 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
     "social" -> "Social Media"
     "adult" -> "Adult Websites"
     "news" -> "News"
+    "dating" -> "Dating"
+    "shopping" -> "Shopping"
     "streaming" -> "Streaming"
     else -> category.label
 }
@@ -295,6 +339,10 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
         @Suppress("UNUSED_PARAMETER") onAppInfo: () -> Unit,
         onToggleFeature: (String, String, Boolean) -> Unit,
         onToggleCustomApp: (String, Boolean) -> Unit,
+        onToggleAppCategory: (String, Boolean) -> Unit,
+        onToggleAppCategoryExcluded: (String, String, Boolean) -> Unit,
+        onAddAppToCategory: (String, String) -> Unit,
+        onRemoveAppFromCategory: (String, String) -> Unit,
         onToggleWebCategory: (String, Boolean) -> Unit,
         onToggleCategorySite: (String, String, Boolean) -> Unit,
         onAddCategorySite: (String, String) -> Boolean,
@@ -307,6 +355,7 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
         androidx.activity.compose.BackHandler(enabled = route != BlockRoute.Main) {
             route = when (val cur = route) {
                 is BlockRoute.AppDetail -> if (cur.fromMore) BlockRoute.MoreFeeds else BlockRoute.Main
+                is BlockRoute.AppCategoryDetail -> BlockRoute.Apps
                 is BlockRoute.WebsiteCategoryDetail -> BlockRoute.Websites
                 else -> BlockRoute.Main
             }
@@ -319,6 +368,7 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
 
         val pauseOn = remember(tick) { FeedSwitches.pauseEnabled(this@FeedsActivity) }
         val customBlocked = remember(tick) { FeedSwitches.customBlockedApps(this@FeedsActivity) }
+        val enabledAppCats = remember(tick) { FeedSwitches.enabledAppCategoryIds(this@FeedsActivity) }
         val customDomains = remember(tick) { FeedSwitches.customBlockedDomains(this@FeedsActivity).sorted() }
         val enabledWebCats = remember(tick) { FeedSwitches.enabledWebsiteCategoryIds(this@FeedsActivity) }
 
@@ -326,11 +376,23 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
         val uninstalledRows = remember(rows) { rows.filterNot { it.second } }
 
         var appQuery by remember { mutableStateOf("") }
+        var catAppQuery by remember { mutableStateOf("") }
         var domainInput by remember { mutableStateOf("") }
         var categorySiteInput by remember { mutableStateOf("") }
 
         val blockedAppItems = remember(candidates, customBlocked) {
             candidates.filter { it.packageName in customBlocked }
+        }
+        val appsSummary = remember(enabledAppCats, blockedAppItems) {
+            when {
+                enabledAppCats.isEmpty() && blockedAppItems.isEmpty() -> "None"
+                enabledAppCats.size == 1 && blockedAppItems.isEmpty() ->
+                    APP_CATEGORIES.firstOrNull { it.id in enabledAppCats }?.label ?: "1 category"
+                enabledAppCats.isNotEmpty() && blockedAppItems.isEmpty() -> "${enabledAppCats.size} categories"
+                enabledAppCats.isEmpty() && blockedAppItems.size == 1 -> "1 app"
+                enabledAppCats.isEmpty() -> "${blockedAppItems.size} apps"
+                else -> "${enabledAppCats.size} cat · ${blockedAppItems.size} apps"
+            }
         }
         val sortedCandidates = remember(candidates, customBlocked, appQuery) {
             val q = appQuery.trim().lowercase()
@@ -433,16 +495,12 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                     item(key = "nav-apps") {
                         NavSummaryRow(
                             title = "Blocked apps",
-                            valueText = when (blockedAppItems.size) {
-                                0 -> "None"
-                                1 -> "1 app"
-                                else -> "${blockedAppItems.size} apps"
-                            },
+                            valueText = appsSummary,
                             index = 0,
                             count = 2,
                             previewIcons = blockedAppItems.mapNotNull { it.icon },
                             glyph = Symbols.apps,
-                            accentActive = blockedAppItems.isNotEmpty(),
+                            accentActive = appsSummary != "None",
                             onClick = { appQuery = ""; route = BlockRoute.Apps },
                             modifier = Modifier.testTag("block-nav-apps"),
                         )
@@ -579,6 +637,7 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
             }
 
             BlockRoute.Apps -> {
+                val searching = appQuery.trim().isNotEmpty()
                 LazyColumn(
                     Modifier.fillMaxSize().background(HoneycombColors.background).safeDrawingPadding().testTag("block-apps-sheet"),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -596,9 +655,43 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                             query = appQuery,
                             onQueryChange = { appQuery = it },
                             onSubmit = {},
-                            placeholder = "Search apps",
+                            placeholder = "Search installed apps",
                             modifier = Modifier.padding(bottom = 10.dp).testTag("feeds-app-search"),
                         )
+                    }
+                    if (!searching) {
+                        item(key = "app-cats-kicker") { SectionKicker("Categories") }
+                        APP_CATEGORIES.forEachIndexed { idx, cat ->
+                            item(key = "app-cat-${cat.id}") {
+                                val catOn = cat.id in enabledAppCats
+                                val excluded = remember(tick, cat.id) { FeedSwitches.appCategoryExcluded(this@FeedsActivity, cat.id) }
+                                val added = remember(tick, cat.id) { FeedSwitches.appCategoryAdded(this@FeedsActivity, cat.id) }
+                                val installedInCat = remember(candidates, cat.id, excluded, added) {
+                                    candidates.filter { matchesAppCategory(it.packageName, it.androidCategory, cat, emptySet(), added) }
+                                }
+                                val subtitle = when {
+                                    installedInCat.isNotEmpty() -> "${installedInCat.size} installed · ${cat.packages.size} covered"
+                                    else -> "${cat.packages.size} apps covered"
+                                }
+                                TwoTargetSwitchRow(
+                                    title = cat.label,
+                                    subtitle = subtitle,
+                                    checked = catOn,
+                                    onClick = {
+                                        catAppQuery = ""
+                                        route = BlockRoute.AppCategoryDetail(cat.id)
+                                    },
+                                    onCheckedChange = { next ->
+                                        if (!locked || next) onToggleAppCategory(cat.id, next)
+                                    },
+                                    index = idx,
+                                    count = APP_CATEGORIES.size,
+                                    glyph = Symbols.apps,
+                                    modifier = Modifier.testTag("app-cat-${cat.id}"),
+                                )
+                            }
+                        }
+                        item(key = "all-apps-kicker") { SectionKicker("All installed apps (${sortedCandidates.size})") }
                     }
                     if (sortedCandidates.isEmpty()) {
                         item(key = "empty-apps") {
@@ -610,10 +703,14 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                     } else {
                         sortedCandidates.forEachIndexed { idx, app ->
                             item(key = "app-${app.packageName}") {
-                                val isBlocked = app.packageName in customBlocked
+                                val isCustom = app.packageName in customBlocked
+                                val byCategory = remember(tick, app.packageName, enabledAppCats) {
+                                    FeedSwitches.isAppBlockedByCategory(this@FeedsActivity, app.packageName)
+                                }
                                 CleanSwitchRow(
                                     title = app.label,
-                                    checked = isBlocked,
+                                    subtitle = if (!isCustom && byCategory) "Blocked by category" else null,
+                                    checked = isCustom || byCategory,
                                     onCheckedChange = { next ->
                                         if (!locked || next) onToggleCustomApp(app.packageName, next)
                                     },
@@ -622,6 +719,128 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                                     appIcon = app.icon,
                                     modifier = Modifier.testTag("feed-custom-${app.packageName}"),
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+
+            is BlockRoute.AppCategoryDetail -> {
+                val category = APP_CATEGORIES.firstOrNull { it.id == curRoute.categoryId }
+                if (category == null) {
+                    route = BlockRoute.Apps
+                } else {
+                    val catOn = category.id in enabledAppCats
+                    val excluded = remember(tick, category.id) { FeedSwitches.appCategoryExcluded(this@FeedsActivity, category.id) }
+                    val added = remember(tick, category.id) { FeedSwitches.appCategoryAdded(this@FeedsActivity, category.id) }
+                    val installedInCat = remember(candidates, category.id, added) {
+                        candidates.filter { matchesAppCategory(it.packageName, it.androidCategory, category, emptySet(), added) }
+                    }
+                    val installedPkgs = remember(installedInCat) { installedInCat.map { it.packageName }.toSet() }
+                    val builtInUninstalled = remember(category.id, installedPkgs) {
+                        category.packages.entries.filter { it.key !in installedPkgs }
+                    }
+                    val addableApps = remember(candidates, installedPkgs, catAppQuery) {
+                        val q = catAppQuery.trim().lowercase()
+                        if (q.isEmpty()) emptyList()
+                        else candidates.filter {
+                            it.packageName !in installedPkgs &&
+                                (it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q))
+                        }.take(12)
+                    }
+                    LazyColumn(
+                        Modifier.fillMaxSize().background(HoneycombColors.background).safeDrawingPadding().testTag("block-app-category-detail"),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        item(key = "header") {
+                            MinimalScreenHeader(
+                                title = category.label,
+                                onBack = { route = BlockRoute.Apps },
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
+                        }
+                        item(key = "master") {
+                            CleanSwitchRow(
+                                title = "Block ${category.label}",
+                                subtitle = if (catOn) "Active (also blocks newly installed)" else "Off",
+                                checked = catOn,
+                                onCheckedChange = { next -> if (!locked || next) onToggleAppCategory(category.id, next) },
+                                index = 0,
+                                count = 1,
+                                modifier = Modifier.padding(bottom = 10.dp).testTag("app-cat-master-${category.id}"),
+                            )
+                        }
+                        item(key = "add-search") {
+                            AppSearchBar(
+                                query = catAppQuery,
+                                onQueryChange = { catAppQuery = it },
+                                onSubmit = {},
+                                placeholder = "Add any installed app to ${category.label}",
+                                modifier = Modifier.padding(bottom = 6.dp).testTag("app-cat-add-search"),
+                            )
+                        }
+                        if (addableApps.isNotEmpty()) {
+                            item(key = "add-kicker") { SectionKicker("Tap to add to ${category.label}") }
+                            addableApps.forEachIndexed { idx, app ->
+                                item(key = "add-cand-${app.packageName}") {
+                                    NavSummaryRow(
+                                        title = app.label,
+                                        valueText = "Add",
+                                        index = idx,
+                                        count = addableApps.size,
+                                        appIcon = app.icon,
+                                        accentActive = true,
+                                        onClick = {
+                                            onAddAppToCategory(category.id, app.packageName)
+                                            catAppQuery = ""
+                                        },
+                                        modifier = Modifier.testTag("app-cat-add-${app.packageName}"),
+                                    )
+                                }
+                            }
+                        }
+                        if (installedInCat.isNotEmpty()) {
+                            item(key = "inst-kicker") { SectionKicker("Installed (${installedInCat.size})") }
+                            installedInCat.forEachIndexed { idx, app ->
+                                val isAdded = app.packageName in added
+                                val included = app.packageName !in excluded
+                                item(key = "inst-${app.packageName}") {
+                                    CleanSwitchRow(
+                                        title = app.label,
+                                        subtitle = if (isAdded) "Added by you" else null,
+                                        checked = included,
+                                        onCheckedChange = { next ->
+                                            if (!locked || next) {
+                                                if (!next && isAdded) onRemoveAppFromCategory(category.id, app.packageName)
+                                                else onToggleAppCategoryExcluded(category.id, app.packageName, !next)
+                                            }
+                                        },
+                                        index = idx,
+                                        count = installedInCat.size,
+                                        appIcon = app.icon,
+                                        modifier = Modifier.testTag("app-cat-inst-${app.packageName}"),
+                                    )
+                                }
+                            }
+                        }
+                        if (builtInUninstalled.isNotEmpty()) {
+                            item(key = "covered-kicker") { SectionKicker("Covered if installed (${builtInUninstalled.size})") }
+                            builtInUninstalled.forEachIndexed { idx, (pkg, label) ->
+                                val included = pkg !in excluded
+                                item(key = "cov-$pkg") {
+                                    CleanSwitchRow(
+                                        title = label,
+                                        checked = included,
+                                        onCheckedChange = { next ->
+                                            if (!locked || next) onToggleAppCategoryExcluded(category.id, pkg, !next)
+                                        },
+                                        index = idx,
+                                        count = builtInUninstalled.size,
+                                        monogram = label.take(1).uppercase(),
+                                        modifier = Modifier.testTag("app-cat-cov-$pkg"),
+                                    )
+                                }
                             }
                         }
                     }
