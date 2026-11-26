@@ -169,25 +169,41 @@ val BROWSER_URL_IDS = listOf(
 val FEED_RULES = listOf(
     AppRule(
         "com.instagram.android", "Instagram", "Messages only", "back",
-        hints = listOf("clips_viewer_view_pager", "clips_viewer", "clips_swipe_refresh"),
-        allowTabs = listOf("direct_tab", "action_bar_inbox_button", "Messages", "Direct"),
+        hints = listOf(
+            "clips_viewer_view_pager", "clips_viewer", "clips_swipe_refresh",
+            "clips_viewer_pager", "clips_media_component", "clips_video_container",
+            "clips_ufi_component", "clips_author_info_component", "clips_viewer_root",
+            "clips_tab_container", "clips_viewer_video_player",
+            "explore_recycler_view", "discovery_recycler_view", "explore_grid",
+            "explore_context_line", "explore_action_bar", "explore_fragment_container",
+        ),
+        allowTabs = listOf("direct_tab", "direct_inbox_tab", "messages_tab", "action_bar_inbox_button", "Messages", "Direct"),
         blockTabs = listOf("feed_tab", "search_tab", "clips_tab"),
         fallbackAllowTabs = listOf("feed_tab", "profile_tab", "Home", "Profile"),
         packageAliases = listOf("com.instagram.lite"),
         features = listOf(
             FeatureRule(
-                "reels", "Block Reels", "Hides & blocks the Reels tab and player",
-                hints = listOf("clips_viewer_view_pager", "clips_viewer", "clips_swipe_refresh"),
+                "reels", "Block Reels", "Blocks the Reels tab and Reels player",
+                hints = listOf(
+                    "clips_viewer_view_pager", "clips_viewer", "clips_swipe_refresh",
+                    "clips_viewer_pager", "clips_media_component", "clips_video_container",
+                    "clips_ufi_component", "clips_author_info_component", "clips_viewer_root",
+                    "clips_tab_container", "clips_viewer_video_player",
+                ),
                 blockTabs = listOf("clips_tab", "Reels"),
                 defaultBlocked = true,
             ),
             FeatureRule(
-                "explore", "Block Explore", "Hides & blocks the Explore tab",
+                "explore", "Block Explore", "Blocks the Explore tab and grid",
+                hints = listOf(
+                    "explore_recycler_view", "discovery_recycler_view", "explore_grid",
+                    "explore_context_line", "explore_action_bar", "explore_fragment_container",
+                ),
                 blockTabs = listOf("search_tab", "Search and explore", "Explore", "Search"),
                 defaultBlocked = true,
             ),
             FeatureRule(
-                "feed", "Block Home feed", "Hides Home & redirects straight to DMs",
+                "feed", "Block Home feed", "Redirects Home straight to Messages",
                 blockTabs = listOf("feed_tab", "Home"),
                 defaultBlocked = true,
             ),
@@ -453,7 +469,8 @@ fun tabLabel(contentDescription: CharSequence?): String {
     val raw = contentDescription?.toString()?.substringBefore(',')?.trim().orEmpty()
     val lower = raw.lowercase()
     return when {
-        "unread message" in lower || lower == "direct messages" || lower == "messenger" -> "Messages"
+        "unread message" in lower || lower == "direct messages" || lower == "messenger" || lower == "inbox" || lower == "chats" -> "Messages"
+        lower == "clips" -> "Reels"
         else -> raw
     }
 }

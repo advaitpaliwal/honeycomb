@@ -2,31 +2,23 @@ package org.honeycomb.launcher
 
 import android.accessibilityservice.AccessibilityService
 import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
-import android.graphics.Color
-import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
-import android.view.Gravity
-import android.view.View
-import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.InputMethodManager
 
 /**
- * Keeps blocked feeds and short-form video tabs hidden & closed using Android's AccessibilityService:
- *  1. Covers blocked bottom-bar tab buttons (e.g. Instagram Reels/Explore, YouTube Shorts, Snapchat Spotlight)
- *     with seamless nav-bar-matched TYPE_ACCESSIBILITY_OVERLAY shields so the icons visually disappear and swallow taps.
- *  2. Backs out immediately if a blocked full-screen viewer opens (e.g. a Reel tapped from a DM or feed),
+ * Keeps blocked feeds and short-form video tabs closed using Android's AccessibilityService:
+ *  1. Redirects directly in one hop to an allowed tab (e.g. Instagram Messages/Direct or Profile) whenever a blocked
+ *     tab (Reels, Explore, Home feed) becomes active — with zero ugly overlay boxes over app chrome.
+ *  2. Backs out immediately if a blocked full-screen viewer opens (e.g. a Reel tapped from a DM or link),
  *     verifying non-zero bounds to avoid zero-size hidden-node false positives.
  * Reads only view IDs and tab labels, never messages or content, and sends nothing over the network.
  */
@@ -43,10 +35,6 @@ class FeedGuard : AccessibilityService() {
         getSystemService(InputMethodManager::class.java).inputMethodList.map { it.packageName }.toSet()
     }
 
-    // Active TYPE_ACCESSIBILITY_OVERLAY shields hiding blocked bottom-bar tabs (zero extra permission needed).
-    private val tabMasks = ArrayList<View>()
-    private var maskedPkg: String? = null
-    private var maskedRects: List<Rect> = emptyList()
     private var pendingBrowserPkg: String? = null
     private var lastBrowserBackAt = 0L
     private var browserBacksInARow = 0
@@ -67,15 +55,17 @@ class FeedGuard : AccessibilityService() {
         try {
             val rule = FeedSwitches.activeRule(this, target)
             val root = if (rule != null) activeRootFor(rule.packageName) else null
-            if (rule == null || root == null) {
-                clearMasks()
-                return@Runnable
-            }
-            updateTabMasks(rule, root)
-            if (blocksWholeApp(rule) || seesHint(rule, root)) act(rule)
-            else if (!redirectTabs(rule, root)) timer.foundNothing()?.let { delay ->
-                pendingPackage = target
-                handler.postDelayed(check, delay)
+            if (rule == null || root == null) return@Runnable
+            // Prefer 1-hop tab redirect over Back when a blocked tab (e.g. Reels/Explore/Home) is selected
+            // so we jump straight to Messages/Profile instead of bouncing through Home.
+            when {
+                blocksWholeApp(rule) -> act(rule)
+                redirectTabs(rule, root) -> Unit
+                seesHint(rule, root) -> act(rule)
+                else -> timer.foundNothing()?.let { delay ->
+                    pendingPackage = target
+                    handler.postDelayed(check, delay)
+                }
             }
         } catch (e: RuntimeException) {
             Log.w(TAG, "check failed", e)
@@ -87,12 +77,8 @@ class FeedGuard : AccessibilityService() {
         val pkg = event.packageName?.toString() ?: return
         val windowChanged = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         if (windowChanged) arrived(pkg, event.className?.toString(), event)
-        if (pkg in PROTECTED_PACKAGES) {
-            if (windowChanged && pkg != packageName) clearMasks()
-            return
-        }
+        if (pkg in PROTECTED_PACKAGES) return
         if (pkg in BROWSER_PACKAGES && FeedSwitches.hasActiveBrowserRules(this) && !FeedSwitches.isCustomAppBlocked(this, pkg)) {
-            if (windowChanged) clearMasks()
             if (windowChanged || event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
                 pendingBrowserPkg = pkg
                 handler.removeCallbacks(browserCheck)
@@ -100,19 +86,7 @@ class FeedGuard : AccessibilityService() {
             }
             return
         }
-        val rule = FeedSwitches.activeRule(this, pkg)
-        if (rule == null) {
-            if (pkg in keyboards) clearMasks()
-            else if (windowChanged && pkg != "com.android.systemui") clearMasks()
-            return
-        }
-        // Keep masks synced immediately when switching into or scrolling inside a monitored app.
-        if (windowChanged ||
-            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
-            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) {
-            runCatching { updateTabMasks(rule, activeRootFor(rule.packageName, event)) }
-        }
+        val rule = FeedSwitches.activeRule(this, pkg) ?: return
         if (blocksWholeApp(rule) && chooseAction(rule, windowChanged, emptyList()) == null) return
         schedule(pkg, windowChanged)
     }
@@ -124,7 +98,6 @@ class FeedGuard : AccessibilityService() {
             packageManager.getLaunchIntentForPackage(pkg) == null && !isHome(pkg)
         ) return
         foreground = pkg
-        if (maskedPkg != null && maskedPkg != pkg) clearMasks()
         if (FeedPass.pkg != pkg && SystemClock.uptimeMillis() - FeedPass.at > PASS_GRACE_MS) FeedPass.pkg = null
         val rule = FeedSwitches.activeRule(this, pkg) ?: return
         if (!FeedSwitches.pauseEnabled(this) || blocksWholeApp(rule) || FeedPass.pkg == pkg) return
@@ -232,123 +205,13 @@ class FeedGuard : AccessibilityService() {
         }
     }
 
-    override fun onInterrupt() {
-        clearMasks()
-    }
+    override fun onInterrupt() {}
 
     override fun onDestroy() {
         handler.removeCallbacks(check)
         handler.removeCallbacks(browserCheck)
         timer.cancel()
-        clearMasks()
         super.onDestroy()
-    }
-
-    // ---- Visual tab hiding via TYPE_ACCESSIBILITY_OVERLAY ------------------------------------------------------------
-
-    /**
-     * Covers every visible blocked bottom-bar tab button with a solid nav-bar-colored overlay window so the Reels /
-     * Explore / Shorts icon visually disappears and taps on that spot are swallowed cleanly.
-     */
-    private fun updateTabMasks(rule: AppRule, resolvedRoot: AccessibilityNodeInfo? = null) {
-        if (rule.blockTabs.isEmpty() || blocksWholeApp(rule)) {
-            clearMasks()
-            return
-        }
-        // Never draw over the soft keyboard if it is open over a monitored app.
-        if (runCatching { windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } }.getOrDefault(false)) {
-            clearMasks()
-            return
-        }
-        val root = resolvedRoot ?: activeRootFor(rule.packageName)
-        if (root == null || root.packageName?.toString() != rule.packageName) {
-            clearMasks()
-            return
-        }
-        val dm = resources.displayMetrics
-        val screenW = dm.widthPixels
-        val screenH = dm.heightPixels
-        val navBarTopMin = (screenH * 0.78f).toInt()
-        val nodes = collectTabNodes(root, rule)
-        var bottomStripTabs = 0
-        val rects = ArrayList<Rect>()
-        for ((index, node) in nodes.withIndex()) {
-            if (!node.isVisibleToUser) continue
-            val r = Rect()
-            node.getBoundsInScreen(r)
-            if (r.top >= navBarTopMin && r.width() in 32..(screenW / 2) && r.height() in 32..(screenH / 6)) {
-                bottomStripTabs++
-            }
-            val seen = SeenTab(tabLabel(nodeLabel(node)), isNodeSelected(node), node.viewIdResourceName)
-            if (tabMatchesAny(seen, rule.allowTabs)) continue
-            val isFirst = index == 0 && FIRST_TAB in rule.blockTabs
-            if (!isFirst && !tabMatchesAny(seen, rule.blockTabs)) continue
-            // Safety guardrail: only ever cover compact bottom-nav tab tiles, never main feed/chat content.
-            if (r.top < navBarTopMin || r.width() !in 32..(screenW / 2) || r.height() !in 32..(screenH / 6)) continue
-            rects.add(r)
-        }
-        // Only render shields when an actual multi-tab bottom navigation bar (>= 3 tabs) is present on screen.
-        if (rects.isEmpty() || bottomStripTabs < 3) {
-            clearMasks()
-            return
-        }
-        if (maskedPkg == rule.packageName && maskedRects == rects) return
-        clearMasks()
-        val wm = getSystemService(WindowManager::class.java) ?: return
-        val bg = navBarMaskColor(rule.packageName)
-        for (r in rects) {
-            val shield = View(this).apply {
-                setBackgroundColor(bg)
-                contentDescription = "Blocked tab"
-            }
-            val lp = WindowManager.LayoutParams(
-                r.width(),
-                r.height(),
-                r.left,
-                r.top,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.OPAQUE,
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                }
-            }
-            runCatching {
-                wm.addView(shield, lp)
-                tabMasks.add(shield)
-            }
-        }
-        maskedPkg = rule.packageName
-        maskedRects = rects
-    }
-
-    private fun navBarMaskColor(pkg: String): Int {
-        val dark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        if (!dark) return Color.WHITE
-        return when {
-            pkg == "com.google.android.youtube" || isModdedYoutubePackage(pkg) -> Color.rgb(15, 15, 15)
-            pkg == "com.facebook.katana" || pkg == "com.facebook.lite" -> Color.rgb(24, 25, 26)
-            else -> Color.BLACK
-        }
-    }
-
-    private fun clearMasks() {
-        if (tabMasks.isEmpty()) {
-            maskedPkg = null
-            maskedRects = emptyList()
-            return
-        }
-        val wm = getSystemService(WindowManager::class.java)
-        for (v in tabMasks) {
-            runCatching { wm?.removeViewImmediate(v) }
-        }
-        tabMasks.clear()
-        maskedPkg = null
-        maskedRects = emptyList()
     }
 
     // ---- Blocking & tab redirect -------------------------------------------------------------------------------------
@@ -392,20 +255,33 @@ class FeedGuard : AccessibilityService() {
     /** Collects candidate nav/action tab nodes via exact view IDs, tabBar container, ActionBar$Tab, bottom-bar and top-bar buttons. */
     private fun collectTabNodes(root: AccessibilityNodeInfo, rule: AppRule): List<AccessibilityNodeInfo> {
         val tabs = ArrayList<AccessibilityNodeInfo>()
+        val seenBounds = HashSet<Rect>()
+        fun addUnique(node: AccessibilityNodeInfo) {
+            val r = Rect()
+            node.getBoundsInScreen(r)
+            if (r.width() <= 0 || r.height() <= 0) return
+            if (seenBounds.add(r)) tabs.add(node)
+        }
         for (id in exactIds(rule.packageName, (rule.allowTabs + rule.blockTabs).filter { '_' in it })) {
-            tabs += root.findAccessibilityNodeInfosByViewId(id)
+            root.findAccessibilityNodeInfosByViewId(id).forEach(::addUnique)
         }
         rule.tabBar?.let { bar ->
             root.findAccessibilityNodeInfosByViewId(exactIds(rule.packageName, listOf(bar)).first())
-                .firstOrNull()?.let { collectClickable(it, tabs) }
+                .firstOrNull()?.let {
+                    val barTabs = ArrayList<AccessibilityNodeInfo>()
+                    collectClickable(it, barTabs)
+                    barTabs.forEach(::addUnique)
+                }
         }
-        if (tabs.isEmpty()) collectTabs(root, tabs, intArrayOf(MAX_NODES))
+        val actionTabs = ArrayList<AccessibilityNodeInfo>()
+        collectTabs(root, actionTabs, intArrayOf(MAX_NODES))
+        actionTabs.forEach(::addUnique)
+        // Always scan the bottom navigation strip so renamed tab IDs (e.g. Instagram's Messages/Direct tab) are never missed.
         val screenH = resources.displayMetrics.heightPixels
         val navTop = (screenH * 0.80f).toInt()
-        if (tabs.size < 2) {
-            // Fallback for apps (like newer Instagram/Snapchat builds) whose bottom tabs use plain ViewGroup/FrameLayout with contentDescription.
-            collectBottomButtons(root, navTop, tabs, intArrayOf(MAX_NODES))
-        }
+        val bottomButtons = ArrayList<AccessibilityNodeInfo>()
+        collectBottomButtons(root, navTop, bottomButtons, intArrayOf(MAX_NODES))
+        bottomButtons.forEach(::addUnique)
         // Also find top-bar allowed buttons (e.g. Instagram's top-right Direct / Messages icon when not in the bottom bar).
         if (rule.allowTabs.isNotEmpty()) {
             val headerBottom = (screenH * 0.20f).toInt()
@@ -549,18 +425,18 @@ class FeedGuard : AccessibilityService() {
 
     companion object {
         private const val TAG = "FeedGuard"
-        private const val DEBOUNCE_MS = 800L
-        private const val SETTLE_MS = 120L
-        private const val BROWSER_SETTLE_MS = 180L
-        private const val FOLLOW_UP_MS = 300L
-        private const val FOLLOW_UPS = 4
+        private const val DEBOUNCE_MS = 350L
+        private const val SETTLE_MS = 80L
+        private const val BROWSER_SETTLE_MS = 150L
+        private const val FOLLOW_UP_MS = 220L
+        private const val FOLLOW_UPS = 6
         private const val ESCALATE_MS = 2500L
-        private const val MAX_NODES = 800
+        private const val MAX_NODES = 1500
         private const val PASS_GRACE_MS = 1500L
         private const val TAB_CLASS = "android.app.ActionBar\$Tab"
 
         /** Whether Android is running Honeycomb's feed service (switched on in Accessibility settings). */
-        fun enabled(ctx: Context): Boolean {
+        fun enabled(ctx: android.content.Context): Boolean {
             val me = ComponentName(ctx, FeedGuard::class.java)
             val list = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
             return list.split(':').any { ComponentName.unflattenFromString(it) == me }
