@@ -44,6 +44,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -55,6 +58,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.flow.Flow
@@ -141,6 +145,67 @@ internal fun rememberGentleJiggle(on: Boolean, seed: Int): Float {
     return angle
 }
 
+/**
+ * Native Compose NestedScrollConnection for pull-down-past-top to focus Search (like iOS Spotlight/Settings),
+ * while cleanly dismissing the keyboard whenever the user scrolls down into the app list.
+ */
+@Composable
+internal fun rememberPullToSearchNestedScroll(
+    enabled: () -> Boolean,
+    isAtTop: () -> Boolean,
+    onPullToSearch: () -> Unit,
+    onDismissKeyboard: () -> Unit,
+): NestedScrollConnection {
+    val px = LocalDensity.current.density
+    val view = LocalView.current
+    val curEnabled by rememberUpdatedState(enabled)
+    val curAtTop by rememberUpdatedState(isAtTop)
+    val curTrigger by rememberUpdatedState(onPullToSearch)
+    val curDismiss by rememberUpdatedState(onDismissKeyboard)
+    return remember(px, view) {
+        object : NestedScrollConnection {
+            private var pullDownPx = 0f
+            private var fired = false
+            private val thresholdPx = 40f * px
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                if (consumed.y < -3f) {
+                    pullDownPx = 0f
+                    fired = false
+                    curDismiss()
+                } else if (curEnabled() && curAtTop() && available.y > 0f) {
+                    pullDownPx += available.y
+                    if (!fired && pullDownPx >= thresholdPx) {
+                        fired = true
+                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        curTrigger()
+                    }
+                } else if (consumed.y > 0f && !curAtTop()) {
+                    pullDownPx = 0f
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                pullDownPx = 0f
+                fired = false
+                return Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                pullDownPx = 0f
+                fired = false
+                return Velocity.Zero
+            }
+        }
+    }
+}
+
 @Composable
 fun WatchGrid(
     icons: List<ImageBitmap>,
@@ -166,6 +231,8 @@ fun WatchGrid(
     header: (@Composable () -> Unit)? = null,
     /** Increment to scroll back to the header (e.g. swipe-down search trigger). */
     headerScrollKey: Int = 0,
+    /** Called when the user overscrolls downward past the top of the grid to focus Search. */
+    onPullToSearch: (() -> Unit)? = null,
     /** Optional replacement body below [header] (e.g. live search hits) so [header] never unmounts or loses IME focus. */
     overrideBody: (LazyGridScope.() -> Unit)? = null,
 ) {
@@ -214,12 +281,16 @@ fun WatchGrid(
         }
     }
 
-    LaunchedEffect(gridScrolling) {
-        if (gridScrolling) {
+    val pullToSearchConnection = rememberPullToSearchNestedScroll(
+        enabled = { onPullToSearch != null && !currentEditing && !anyDragging },
+        isAtTop = { gridState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemScrollOffset == 0 },
+        onPullToSearch = { onPullToSearch?.invoke() },
+        onDismissKeyboard = {
             focusManager.clearFocus(force = true)
             keyboard?.hide()
-        }
-    }
+        },
+    )
+
     LaunchedEffect(gridState, crownKeys, px) {
         crownKeys.collect { step ->
             gridState.animateScrollBy(-step * (ICON_D + ROW_GAP) * px)
@@ -245,7 +316,7 @@ fun WatchGrid(
         LazyVerticalGrid(
             columns = GridCells.Fixed(HONEYCOMB_GRID_SPANS),
             state = gridState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().nestedScroll(pullToSearchConnection),
             contentPadding = PaddingValues(
                 start = 12.dp,
                 end = 12.dp,

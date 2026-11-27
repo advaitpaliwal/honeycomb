@@ -83,6 +83,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
@@ -824,13 +825,16 @@ fun AppListScreen(
     val px = LocalDensity.current.density
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    val dragging by state.interactionSource.collectIsDraggedAsState()
-    LaunchedEffect(dragging) {
-        if (dragging) {
+    var pullSearchKey by remember { mutableIntStateOf(0) }
+    val listPullToSearch = rememberPullToSearchNestedScroll(
+        enabled = { true },
+        isAtTop = { state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0 },
+        onPullToSearch = { pullSearchKey++ },
+        onDismissKeyboard = {
             focusManager.clearFocus(force = true)
             keyboard?.hide()
-        }
-    }
+        },
+    )
     LaunchedEffect(state, rowSteps, px) { rowSteps.collect { state.scrollBy(-it * LIST_ROW * px) } }
     LaunchedEffect(searchFocusKey) { if (searchFocusKey > 0) state.scrollToItem(0) }
     val switchButton = onGridView != null && pickFor == null
@@ -839,7 +843,9 @@ fun AppListScreen(
     Backdrop(Modifier.testTag("app-list")) {
         Box(Modifier.fillMaxSize()) {
             LazyColumn(
-                Modifier.fillMaxSize().softTopScrollFade(clearTop = statusBarInset, feather = 12.dp),
+                Modifier.fillMaxSize()
+                    .nestedScroll(listPullToSearch)
+                    .softTopScrollFade(clearTop = statusBarInset, feather = 12.dp),
                 state = state,
                 contentPadding = PaddingValues(
                     start = 16.dp,
@@ -859,7 +865,7 @@ fun AppListScreen(
                                 if (pickFor != null) onPicked(key) else onOpen(app.component, null)
                             }
                         },
-                        focusKey = searchFocusKey,
+                        focusKey = searchFocusKey + pullSearchKey,
                         onFocused = onSearchFocused,
                         modifier = Modifier
                             .padding(horizontal = 4.dp, vertical = 6.dp)
@@ -973,6 +979,7 @@ fun AppGridScreen(
     val shown = remember(order, byKey) { order.mapNotNull { byKey[it] } }
     var menuApp by remember { mutableStateOf<App?>(null) }
     var query by remember { mutableStateOf("") }
+    var pullSearchKey by remember { mutableIntStateOf(0) }
     val trimmed = query.trim()
     val matches = remember(trimmed, shown) {
         if (trimmed.isEmpty()) emptyList() else filterApps(shown, trimmed)
@@ -989,7 +996,7 @@ fun AppGridScreen(
                     onOpen(app.component, null)
                 }
             },
-            focusKey = searchFocusKey,
+            focusKey = searchFocusKey + pullSearchKey,
             onFocused = onSearchFocused,
             modifier = Modifier
                 .padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 12.dp)
@@ -1016,6 +1023,7 @@ fun AppGridScreen(
                 onEditing = onEditing,
                 header = searchHeader,
                 headerScrollKey = searchFocusKey,
+                onPullToSearch = { pullSearchKey++ },
                 overrideBody = if (trimmed.isEmpty()) null else {
                     {
                         items(
