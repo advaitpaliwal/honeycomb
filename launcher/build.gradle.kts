@@ -60,9 +60,11 @@ android {
     kotlin { jvmToolchain(17) }
 }
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2025.04.01"))
+    implementation(platform("androidx.compose:compose-bom:2026.11.01"))
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+    // Battle-tested Compose drag-and-drop grid/list reordering (Calvin-LL/Reorderable, Apache 2.0, used by Lawnchair)
+    implementation("sh.calvin.reorderable:reorderable:3.1.0")
     // Honeycomb's own colour scheme from the honey seed when the phone has none (jordond/MaterialKolor, MIT)
     implementation("com.materialkolor:material-kolor:2.1.1")
     implementation("androidx.compose.ui:ui")
@@ -73,7 +75,7 @@ dependencies {
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     testImplementation("junit:junit:4.13.2")
     // Compose UI tests on the device over the real home (HomeFeaturesTest, FeatureStatesTest)
-    androidTestImplementation(platform("androidx.compose:compose-bom:2025.04.01"))
+    androidTestImplementation(platform("androidx.compose:compose-bom:2026.11.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test:runner:1.7.0")

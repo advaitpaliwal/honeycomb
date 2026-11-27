@@ -375,43 +375,35 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                         icon = Symbols.block,
                         height = 40.dp,
                     )
-                    CapsuleButton(
-                        text = "Keyboard",
-                        onClick = { HoneycombKeyboard.openSettingsOrPicker(ctx) },
-                        modifier = Modifier.testTag("control-keyboard"),
-                        icon = Symbols.keyboard,
-                        height = 40.dp,
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                if (availableUpdate != null) {
-                    CapsuleButton(
-                        text = "Update ${availableUpdate.tag}",
-                        onClick = {
-                            ctx.startActivity(
-                                Intent(ctx, HoneycombSettingsActivity::class.java)
-                                    .putExtra(AppUpdater.EXTRA_START_UPDATE, true)
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                            )
-                        },
-                        modifier = Modifier.testTag("control-update"),
-                        icon = Symbols.download,
-                        filled = true,
-                        height = 40.dp,
-                    )
-                } else {
-                    CapsuleButton(
-                        text = "Settings",
-                        onClick = {
-                            ctx.startActivity(
-                                Intent(ctx, HoneycombSettingsActivity::class.java)
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                            )
-                        },
-                        modifier = Modifier.testTag("control-settings"),
-                        icon = Symbols.settings,
-                        height = 40.dp,
-                    )
+                    if (availableUpdate != null) {
+                        CapsuleButton(
+                            text = "Update ${availableUpdate.tag}",
+                            onClick = {
+                                ctx.startActivity(
+                                    Intent(ctx, HoneycombSettingsActivity::class.java)
+                                        .putExtra(AppUpdater.EXTRA_START_UPDATE, true)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                )
+                            },
+                            modifier = Modifier.testTag("control-update"),
+                            icon = Symbols.download,
+                            filled = true,
+                            height = 40.dp,
+                        )
+                    } else {
+                        CapsuleButton(
+                            text = "Settings",
+                            onClick = {
+                                ctx.startActivity(
+                                    Intent(ctx, HoneycombSettingsActivity::class.java)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                )
+                            },
+                            modifier = Modifier.testTag("control-settings"),
+                            icon = Symbols.settings,
+                            height = 40.dp,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(pt * ControlGrid.CAPSULE_TOP))
             }
@@ -548,7 +540,7 @@ fun QuietScreen(onBack: () -> Unit) {
                             BasicText("2nd call within 15 min rings", style = HoneycombType.footnote.copy(color = HoneycombColors.secondaryLabel))
                         }
                         Spacer(Modifier.size(Space.s))
-                        Switch(repeat)
+                        NativeSwitch(checked = repeat)
                     }
                 }
             }
@@ -564,28 +556,5 @@ private object QuietInset {
     val time: Dp get() = 18.wp
     val platter: Dp get() = 2.5f.wp
     val row: Dp get() = 14.wp
-}
-
-// ---- Control Centre's own controls ----
-
-/** Settings switch in the watch reference (31-settings-notifications, 2 px per watch point). */
-private object SwitchTokens {
-    val trackWidth = 36.wp
-    val trackHeight = 22.wp
-    val thumb = 20.wp
-    val inset = (trackHeight - thumb) / 2
-}
-
-/** The row owns the switch action; the track only draws its state. */
-@Composable
-private fun Switch(checked: Boolean) {
-    val x by animateDpAsState(
-        if (checked) SwitchTokens.trackWidth - SwitchTokens.thumb - SwitchTokens.inset else SwitchTokens.inset,
-        Motion.orSnap(HoneycombTheme.reduceMotion) { Motion.snappy.spec() }, label = "switch",
-    )
-    Box(Modifier.size(SwitchTokens.trackWidth, SwitchTokens.trackHeight).clip(CircleShape)
-        .background(if (checked) HoneycombColors.accent else HoneycombColors.button)) {
-        Box(Modifier.offset(x = x, y = SwitchTokens.inset).size(SwitchTokens.thumb).clip(CircleShape).background(if (checked) HoneycombColors.onAccent else HoneycombColors.outline))
-    }
 }
 

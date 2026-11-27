@@ -367,8 +367,12 @@ fun FavouritesScreen(
     val curOnPins by rememberUpdatedState(onPins)
     val curOnEditing by rememberUpdatedState(onEditing)
 
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose { DragOwners.activeDrag = false }
+    androidx.compose.runtime.DisposableEffect(editing) {
+        DragOwners.editingLock = editing
+        onDispose {
+            DragOwners.editingLock = false
+            DragOwners.activeDrag = false
+        }
     }
 
     fun slotTopLeftPx(slot: Int): Offset {
@@ -473,7 +477,7 @@ fun FavouritesScreen(
             CentredFrame(
                 modifier = Modifier.pointerInput(Unit) {
                     awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                         val hitSlot = hitTestSlot(down.position)
                         if (hitSlot < 0) return@awaitEachGesture
                         val hitKey = curPins.getOrNull(hitSlot) ?: return@awaitEachGesture
@@ -482,12 +486,12 @@ fun FavouritesScreen(
 
                         try {
                             if (curEditing) {
-                                // Explicit jiggle mode: instant zero-delay drag; tapping an icon NEVER jumps to Search!
+                                // Explicit jiggle mode: instant zero-delay drag on Initial pass; root swipes locked out!
                                 pressedKey = hitKey
                                 var total = Offset.Zero
                                 var started = false
                                 while (true) {
-                                    val ev = awaitPointerEvent()
+                                    val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                                     val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
                                     if (!ch.pressed) {
                                         if (started) {
@@ -500,7 +504,7 @@ fun FavouritesScreen(
                                     }
                                     val delta = ch.positionChange()
                                     total += delta
-                                    if (!started && hypot(total.x, total.y) > slop * 0.45f) {
+                                    if (!started && hypot(total.x, total.y) > slop * 0.4f) {
                                         started = true
                                         DragOwners.activeDrag = true
                                         pressedKey = null
@@ -522,7 +526,7 @@ fun FavouritesScreen(
                             pressedKey = hitKey
                             var cancelled = false
                             var liftedEarly = false
-                            val endedBeforeHold = withTimeoutOrNull(280L) {
+                            val endedBeforeHold = withTimeoutOrNull(260L) {
                                 var moved = Offset.Zero
                                 while (true) {
                                     val ev = awaitPointerEvent()
@@ -541,7 +545,7 @@ fun FavouritesScreen(
                                 return@awaitEachGesture
                             }
 
-                            // Stage 2: Haptic Pop! Lock out root navigation immediately.
+                            // Stage 2: Haptic Pop! Lock out root navigation on Initial pass immediately.
                             DragOwners.activeDrag = true
                             pressedKey = null
                             heldKey = hitKey
@@ -550,7 +554,7 @@ fun FavouritesScreen(
                             var dragAccum = Offset.Zero
                             var startedDrag = false
                             while (true) {
-                                val ev = awaitPointerEvent()
+                                val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                                 val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
                                 if (!ch.pressed) {
                                     ch.consume()
@@ -620,15 +624,19 @@ fun FavouritesScreen(
                             animationSpec = PICKUP_SCALE_SPRING,
                             label = "fav-scale",
                         )
-                        // Track finger 1:1 while dragged; spring smoothly to destination slot whenever released or displaced!
-                        LaunchedEffect(isDragged, dragCenterPx, targetCenter) {
-                            if (isDragged) {
-                                animCenter.snapTo(dragCenterPx)
-                            } else {
-                                animCenter.animateTo(targetCenter, REORDER_OFFSET_SPRING)
+                        val lastDragPos = remember(appKey) { mutableStateOf<Offset?>(null) }
+                        if (isDragged) lastDragPos.value = dragCenterPx
+                        // Zero per-frame coroutine launches while dragging; spring smoothly only when displaced or released!
+                        LaunchedEffect(isDragged, targetCenter) {
+                            if (!isDragged) {
+                                lastDragPos.value?.let { releasePos ->
+                                    animCenter.snapTo(releasePos)
+                                    lastDragPos.value = null
+                                }
+                                animCenter.animateTo(targetCenter, DROP_SETTLE_SPRING)
                             }
                         }
-                        val pose = rememberOrganicJiggle(visualJiggle && !isDragged, appKey.hashCode())
+                        val jiggleRot = rememberGentleJiggle(editing && !isDragged, appKey.hashCode())
                         val drawCenter = if (isDragged) dragCenterPx else animCenter.value
                         val drawTopLeftX = drawCenter.x - animD * px / 2f
                         val drawTopLeftY = drawCenter.y - animD * px / 2f
@@ -639,9 +647,7 @@ fun FavouritesScreen(
                                 .zIndex(if (isDragged) 20f else if (isHeld) 10f else 1f)
                                 .offset { IntOffset(drawTopLeftX.roundToInt(), drawTopLeftY.roundToInt()) }
                                 .graphicsLayer {
-                                    translationX = pose.txDp * px
-                                    translationY = pose.tyDp * px
-                                    rotationZ = pose.rotation
+                                    rotationZ = jiggleRot
                                     scaleX = scale
                                     scaleY = scale
                                 }
@@ -712,21 +718,13 @@ fun FavouritesScreen(
                     menuSlot = null; onEditing(false); onDontRecommend(slot, key)
                 })
             }
-            Box(
-                Modifier.fillMaxSize().background(HoneycombColors.sheetDim)
-                    .pointerInput(key) { detectTapGestures { menuSlot = null } },
-                contentAlignment = Alignment.BottomCenter,
-            ) {
-                ActionMenu(
-                    title = app.label,
-                    icon = app.icon,
-                    actions = actions,
-                    modifier = Modifier
-                        .padding(start = 24.dp, end = 24.dp, bottom = scrollBottomInset + 24.dp)
-                        .testTag("favourite-menu")
-                        .pointerInput(key) { detectTapGestures { /* consume inside card */ } },
-                )
-            }
+            ActionMenuSheet(
+                title = app.label,
+                icon = app.icon,
+                actions = actions,
+                onDismiss = { menuSlot = null },
+                modifier = Modifier.testTag("favourite-menu"),
+            )
         }
     }
 }
@@ -947,7 +945,7 @@ fun AppListScreen(
 // ---- the all-apps grid --------------------------------------------------------------------------------------------
 
 /** watchOS 27's full grid is measured at 422 px wide; Honeycomb's frame is 360 units. */
-const val VIEW_K = FRAME_W / WatchGrid.NATIVE_W
+const val VIEW_K = FRAME_W / 422f
 
 /**
  * Full app grid: staggered 3-4-3-4 Honeycomb grid on LazyColumn with most-used apps at the top.
@@ -1020,7 +1018,12 @@ fun AppGridScreen(
                 headerScrollKey = searchFocusKey,
                 overrideBody = if (trimmed.isEmpty()) null else {
                     {
-                        itemsIndexed(matches, key = { _, a -> a.component.flattenToString() }) { _, app ->
+                        items(
+                            count = matches.size,
+                            key = { idx -> matches[idx].component.flattenToString() },
+                            span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) },
+                        ) { idx ->
+                            val app = matches[idx]
                             AppSearchRow(
                                 label = app.label,
                                 icon = app.icon,
@@ -1028,14 +1031,14 @@ fun AppGridScreen(
                                     query = ""
                                     onOpen(app.component, null)
                                 },
-                                modifier = Modifier.padding(horizontal = 20.dp).testTag("search-hit-${app.component.flattenToString()}"),
+                                modifier = Modifier.padding(horizontal = 6.dp).testTag("search-hit-${app.component.flattenToString()}"),
                             )
                         }
                         if (matches.isEmpty()) {
-                            item(key = "no-matches") {
+                            item(key = "no-matches", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                                 SettingsNote(
                                     "No apps matching \"$trimmed\"",
-                                    Modifier.padding(horizontal = 32.dp, vertical = 16.dp),
+                                    Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
                                 )
                             }
                         }
@@ -1075,21 +1078,13 @@ fun AppGridScreen(
                     })
                 }
             }
-            Box(
-                Modifier.fillMaxSize().background(HoneycombColors.sheetDim)
-                    .pointerInput(key) { detectTapGestures { menuApp = null } },
-                contentAlignment = Alignment.BottomCenter,
-            ) {
-                ActionMenu(
-                    title = app.label,
-                    icon = app.icon,
-                    actions = actions,
-                    modifier = Modifier
-                        .padding(start = 24.dp, end = 24.dp, bottom = scrollBottomInset + 24.dp)
-                        .testTag("grid-app-menu")
-                        .pointerInput(key) { detectTapGestures { /* consume inside card */ } },
-                )
-            }
+            ActionMenuSheet(
+                title = app.label,
+                icon = app.icon,
+                actions = actions,
+                onDismiss = { menuApp = null },
+                modifier = Modifier.testTag("grid-app-menu"),
+            )
         }
     }
 }

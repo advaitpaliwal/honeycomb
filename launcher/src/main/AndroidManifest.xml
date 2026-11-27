@@ -131,18 +131,5 @@
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity="org.honeycomb.launcher.pause" />
-        <!-- Minimal iOS-style offline keyboard (zero suggestion strip, zero toolbar clutter). -->
-        <service
-            android:name=".HoneycombKeyboardService"
-            android:exported="true"
-            android:label="Honeycomb Keyboard"
-            android:permission="android.permission.BIND_INPUT_METHOD">
-            <intent-filter>
-                <action android:name="android.view.InputMethod" />
-            </intent-filter>
-            <meta-data
-                android:name="android.view.im"
-                android:resource="@xml/honeycomb_keyboard" />
-        </service>
     </application>
 </manifest>

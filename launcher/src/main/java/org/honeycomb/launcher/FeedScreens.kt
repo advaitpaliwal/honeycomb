@@ -1143,7 +1143,7 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         title = "Home screen",
                         valueText = "${homeStart.label} · ${homeStart.subtitle}",
                         index = 0,
-                        count = 6,
+                        count = 5,
                         glyph = Symbols.apps,
                         onClick = {
                             val modes = HomeStartMode.entries
@@ -1158,7 +1158,7 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         title = "Quiet calls",
                         valueText = Quiet.summary(quietMode, quietRepeat),
                         index = 1,
-                        count = 6,
+                        count = 5,
                         glyph = Symbols.moon,
                         onClick = {
                             val modes = Quiet.CallMode.entries
@@ -1174,7 +1174,7 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         title = "Setup",
                         valueText = "Permissions & home app",
                         index = 2,
-                        count = 6,
+                        count = 5,
                         glyph = Symbols.apps,
                         onClick = { startActivity(setup) },
                         modifier = Modifier.testTag("settings-setup"),
@@ -1183,25 +1183,16 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         title = "Block",
                         valueText = "Feeds, apps & websites",
                         index = 3,
-                        count = 6,
+                        count = 5,
                         glyph = Symbols.block,
                         onClick = { startActivity(Intent(this@HoneycombSettingsActivity, FeedsActivity::class.java)) },
                         modifier = Modifier.testTag("settings-feeds"),
                     )
                     NavSummaryRow(
-                        title = "Keyboard",
-                        valueText = "Input method settings",
-                        index = 4,
-                        count = 6,
-                        glyph = Symbols.keyboard,
-                        onClick = { HoneycombKeyboard.openSettingsOrPicker(this@HoneycombSettingsActivity) },
-                        modifier = Modifier.testTag("settings-keyboard"),
-                    )
-                    NavSummaryRow(
                         title = updateTitle,
                         valueText = updateSubtitle,
-                        index = 5,
-                        count = 6,
+                        index = 4,
+                        count = 5,
                         glyph = Symbols.download,
                         accentActive = updateActive,
                         onClick = {

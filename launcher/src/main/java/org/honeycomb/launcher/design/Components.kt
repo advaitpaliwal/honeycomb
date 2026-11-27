@@ -24,6 +24,14 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -421,6 +429,33 @@ fun ActionMenu(
     }
 }
 
+/** Native Material 3 ModalBottomSheet wrapping [ActionMenu] with real drag-to-dismiss physics and scrim. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ActionMenuSheet(
+    title: String,
+    icon: androidx.compose.ui.graphics.ImageBitmap,
+    actions: List<MenuAction>,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = HoneycombColors.platter,
+        contentColor = HoneycombColors.label,
+        scrimColor = HoneycombColors.sheetDim,
+    ) {
+        ActionMenu(
+            title = title,
+            icon = icon,
+            actions = actions,
+            modifier = modifier.padding(start = 12.dp, end = 12.dp, bottom = 16.dp),
+        )
+    }
+}
+
 /** Clean phone-proportioned settings card grouping per-app feature toggles (e.g. Instagram -> Reels, Explore, Feed). */
 @Composable
 fun SettingsGroup(
@@ -490,11 +525,6 @@ fun ToggleRow(
         color = HoneycombColors.secondaryLabel,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
     )
-    val thumbOffset by androidx.compose.animation.core.animateDpAsState(
-        targetValue = if (checked) 20.dp else 3.dp,
-        animationSpec = org.honeycomb.launcher.Motion.snappy.spec(),
-        label = "toggle-thumb",
-    )
     Column(modifier.fillMaxWidth()) {
         if (showDivider) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(1.dp).background(HoneycombColors.outline.copy(alpha = 0.10f)))
@@ -513,20 +543,7 @@ fun ToggleRow(
                 BasicText(title, style = labelStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 BasicText(subtitle, style = subStyle, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            Box(
-                Modifier
-                    .size(42.dp, 25.dp)
-                    .clip(Capsule)
-                    .background(if (checked) HoneycombColors.accent else HoneycombColors.button),
-            ) {
-                Box(
-                    Modifier
-                        .padding(start = thumbOffset, top = 3.dp)
-                        .size(19.dp)
-                        .clip(Circle)
-                        .background(if (checked) HoneycombColors.onAccent else HoneycombColors.outline),
-                )
-            }
+            NativeSwitch(checked = checked)
         }
     }
 }
@@ -1041,7 +1058,7 @@ private fun Modifier.pointerInputScrubber(onScrub: (y: Float, height: Float, fin
         }
     }
 
-/** Sleek iOS / Opal-style segmented pill switcher (e.g. Feeds · Apps · Websites). */
+/** Native Material 3 SingleChoiceSegmentedButtonRow switcher (e.g. Feeds · Apps · Websites). */
 @Composable
 fun SegmentedTabs(
     tabs: List<String>,
@@ -1061,25 +1078,23 @@ fun SegmentedTabs(
         fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
         color = HoneycombColors.secondaryLabel,
     )
-    androidx.compose.foundation.layout.Row(
-        modifier
-            .fillMaxWidth()
-            .surface(HoneycombColors.platter, Capsule, rim = false)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    SingleChoiceSegmentedButtonRow(modifier = modifier.fillMaxWidth()) {
         tabs.forEachIndexed { idx, label ->
             val selected = idx == selectedIndex
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(34.dp)
-                    .clip(Capsule)
-                    .background(if (selected) HoneycombColors.accent else Color.Transparent)
-                    .clickable(role = Role.Tab) { onSelect(idx) }
-                    .semantics { contentDescription = label },
-                contentAlignment = Alignment.Center,
+            SegmentedButton(
+                selected = selected,
+                onClick = { onSelect(idx) },
+                shape = SegmentedButtonDefaults.itemShape(index = idx, count = tabs.size),
+                icon = {},
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = HoneycombColors.accent,
+                    activeContentColor = HoneycombColors.onAccent,
+                    activeBorderColor = Color.Transparent,
+                    inactiveContainerColor = HoneycombColors.platter,
+                    inactiveContentColor = HoneycombColors.secondaryLabel,
+                    inactiveBorderColor = HoneycombColors.outline.copy(alpha = 0.25f),
+                ),
+                modifier = Modifier.semantics { contentDescription = label },
             ) {
                 BasicText(label, style = if (selected) activeStyle else inactiveStyle, maxLines = 1)
             }
@@ -1177,35 +1192,27 @@ fun SectionKicker(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** Native Android 16 Material 3 Switch silhouette (outlined track when off, solid accent track when on). */
+/** Native Material 3 Switch synced to Honeycomb's theme (parent row owns click/toggleable semantics). */
+@Composable
+fun NativeSwitch(checked: Boolean, modifier: Modifier = Modifier) {
+    Switch(
+        checked = checked,
+        onCheckedChange = null,
+        modifier = modifier,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = HoneycombColors.onAccent,
+            checkedTrackColor = HoneycombColors.accent,
+            checkedBorderColor = Color.Transparent,
+            uncheckedThumbColor = HoneycombColors.outline,
+            uncheckedTrackColor = HoneycombColors.background,
+            uncheckedBorderColor = HoneycombColors.outline,
+        ),
+    )
+}
+
 @Composable
 private fun SettingsSwitch(checked: Boolean, modifier: Modifier = Modifier) {
-    val thumbOffset by androidx.compose.animation.core.animateDpAsState(
-        targetValue = if (checked) 23.dp else 6.dp,
-        animationSpec = org.honeycomb.launcher.Motion.snappy.spec(),
-        label = "m3-switch-thumb",
-    )
-    val thumbSize by androidx.compose.animation.core.animateDpAsState(
-        targetValue = if (checked) 22.dp else 14.dp,
-        animationSpec = org.honeycomb.launcher.Motion.snappy.spec(),
-        label = "m3-switch-size",
-    )
-    Box(
-        modifier
-            .size(48.dp, 28.dp)
-            .clip(Capsule)
-            .background(if (checked) HoneycombColors.accent else HoneycombColors.background)
-            .then(if (checked) Modifier else Modifier.border(1.5.dp, HoneycombColors.outline, Capsule)),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Box(
-            Modifier
-                .padding(start = thumbOffset)
-                .size(thumbSize)
-                .clip(Circle)
-                .background(if (checked) HoneycombColors.onAccent else HoneycombColors.outline),
-        )
-    }
+    NativeSwitch(checked = checked, modifier = modifier)
 }
 
 /**

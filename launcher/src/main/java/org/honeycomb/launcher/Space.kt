@@ -209,7 +209,7 @@ fun Modifier.spaceInput(
     pointerInput(Unit) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            if (DragOwners.activeDrag) return@awaitEachGesture
+            if (DragOwners.activeDrag || DragOwners.editingLock) return@awaitEachGesture
             if (down.position.y >= size.height - systemBand) return@awaitEachGesture
             val s = read()
             val top = EdgeSwipe.nearTop(down.position.y, EdgeSwipe.EDGE_DP * realDp)
@@ -224,7 +224,7 @@ fun Modifier.spaceInput(
             while (true) {
                 val e = awaitPointerEvent(PointerEventPass.Initial)
                 val c = e.changes.firstOrNull { it.id == down.id } ?: break
-                if (DragOwners.activeDrag) return@awaitEachGesture
+                if (DragOwners.activeDrag || DragOwners.editingLock) return@awaitEachGesture
                 tracker.addPosition(c.uptimeMillis, c.position)
                 d += c.positionChange()
                 if (taken == null && hypot(d.x, d.y) > viewConfiguration.touchSlop * 2f) {

@@ -138,7 +138,7 @@ object Motion {
     }
 
     /** Edit mode's jiggle: each icon rocks on its own period (140, 155 or 170 ms) so neighbours never move in step. */
-    fun <T> jiggle(seed: Int): TweenSpec<T> = tween(JIGGLE_MS + seed % 3 * JIGGLE_STEP_MS)
+    fun <T> jiggle(seed: Int): TweenSpec<T> = tween(JIGGLE_MS + kotlin.math.abs(seed) % 3 * JIGGLE_STEP_MS)
     private const val JIGGLE_MS = 140
     private const val JIGGLE_STEP_MS = 15
 
@@ -147,73 +147,6 @@ object Motion {
 
     /** How long the feed pause's two choices take to fade in after the breath. */
     const val CHOICES_FADE_MS = 400
-
-    /*
-     * The app grid's motion. Every number was measured from watchOS simulator recordings and is unchanged: the
-     * honeycomb's fitted time constants (bounce-fit.json, tap-fit.json) and the watch grid's snap spring and sampled
-     * curves (clips 13, 20, 22).
-     */
-    object Grid {
-        // ---- The honeycomb (Honeycomb.kt; aliased by [Honeycomb]) ----
-
-        /** Time constant of the edge return, e(t) = 55.46 exp(-t / 0.1505) px (bounce-fit.json, rms 0.8 px). */
-        const val HONEYCOMB_EDGE_TAU = 0.1505f
-
-        /** Time constant of the tap-to-open expansion, w(t) = W - (W - w0) exp(-t / 0.1054) (tap-fit.json, rms 1.3 px). */
-        const val HONEYCOMB_OPEN_TAU = 0.1054f
-
-        /** The expansion fills the screen in about 400 ms (tap-snapshot-widths.csv reaches 287 of 288 px at 0.40 s). */
-        const val HONEYCOMB_OPEN_MS = 400
-
-        /** The edge return is visually done in about 0.43 s (within 5 px); the tween runs four time constants. */
-        const val HONEYCOMB_EDGE_MS = 600
-
-        /** The edge return as a spring on the same time constant (critically damped). */
-        fun honeycombEdgeSpring(): SpringSpec<Float> = spring(1f, stiffnessFor(HONEYCOMB_EDGE_TAU))
-
-        /** The edge return from a still finger: exponential on [HONEYCOMB_EDGE_TAU]. */
-        fun honeycombEdgeReturn(): TweenSpec<Float> =
-            tween(HONEYCOMB_EDGE_MS, easing = ExponentialEasing(HONEYCOMB_EDGE_TAU, HONEYCOMB_EDGE_MS / 1000f))
-
-        /** Tap to open: exponential on [HONEYCOMB_OPEN_TAU]. */
-        fun honeycombOpen(): TweenSpec<Float> =
-            tween(HONEYCOMB_OPEN_MS, easing = ExponentialEasing(HONEYCOMB_OPEN_TAU, HONEYCOMB_OPEN_MS / 1000f))
-
-        // ---- The watch grid (WatchGridView.kt; aliased by [WatchGrid]) ----
-
-        /** How fast the edge rows fade in when the grid starts moving and out once it has settled, seconds. */
-        const val WATCH_EDGE_FADE_IN_S = 0.1f
-        const val WATCH_EDGE_FADE_OUT_S = 0.2f
-
-        /** Fling: projected distance = release velocity x 0.4 s, rounded to a row (13/22: 526 px/s moved one icon 2 rows). */
-        const val WATCH_FLING_PROJECTION_S = 0.4f
-
-        /** A fling headed past the end slows on this multiple of the projection time before handing over to the bounce. */
-        const val WATCH_FLING_DECAY_FACTOR = 4.2f
-
-        /** Snap spring, critically damped, stiffness 256 (w = 16/s): 210 px at 526 px/s settles within 1 px in 0.45 s, as clip 22. */
-        const val WATCH_SNAP_STIFFNESS = 256f
-
-        /** The friction for a fling's slowdown past the end. */
-        const val WATCH_FLING_FRICTION = 1f / (WATCH_FLING_DECAY_FACTOR * WATCH_FLING_PROJECTION_S)
-
-        fun watchSnap(): SpringSpec<Float> = spring(1f, WATCH_SNAP_STIFFNESS)
-
-        /** A sampled curve's whole run, linear in time, so the curve itself is read at each frame's time. */
-        private fun sampled(durationS: Float, easing: Easing = LinearEasing): TweenSpec<Float> = tween((durationS * 1000).toInt(), easing = easing)
-
-        /** App open: the grid zooms and fades about the icon on clip 20's sampled [OpenCurve]. */
-        fun watchOpen(): TweenSpec<Float> = sampled(OpenCurve.DURATION_S)
-
-        /** Back from the app, on [ReturnCurve]. */
-        fun watchReturn(): TweenSpec<Float> = sampled(ReturnCurve.DURATION_S)
-
-        /** The edge bounce from a pull, on clip 13's sampled [BounceCurve], run as 0 to 1. */
-        fun watchBounce(): TweenSpec<Float> = sampled(BounceCurve.DURATION_S) { 1f - BounceCurve.at(it * BounceCurve.DURATION_S) }
-
-        /** The edge rows' fade in ([on]) or out, on Compose's default easing. */
-        fun watchEdgeFade(on: Boolean): TweenSpec<Float> = tween(((if (on) WATCH_EDGE_FADE_IN_S else WATCH_EDGE_FADE_OUT_S) * 1000).toInt())
-    }
 }
 
 /**
