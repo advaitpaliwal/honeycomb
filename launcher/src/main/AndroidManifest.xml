@@ -97,10 +97,17 @@
         <activity
             android:name=".FeedsActivity"
             android:label="Block"
+            android:icon="@mipmap/ic_block"
+            android:roundIcon="@mipmap/ic_block"
             android:theme="@style/Home"
             android:screenOrientation="portrait"
-            android:exported="false"
-            android:taskAffinity="org.honeycomb.launcher.settings" />
+            android:exported="true"
+            android:taskAffinity="org.honeycomb.launcher.block">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <service
             android:name=".BlockTileService"
             android:exported="true"

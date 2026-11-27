@@ -1011,30 +1011,11 @@ fun AppListScreen(
                     }
                 }
                 if (switchButton && trimmed.isEmpty()) item(key = "grid-view") {
-                    androidx.compose.foundation.layout.Row(
+                    Box(
                         Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 8.dp),
-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically,
+                        contentAlignment = Alignment.Center,
                     ) {
                         ViewSwitchButton(showingGrid = false, onSwitch = onGridView!!)
-                        if (onOpenBlock != null) {
-                            CapsuleButton(
-                                text = "Block",
-                                onClick = onOpenBlock,
-                                modifier = Modifier.testTag("apps-block"),
-                                icon = Symbols.block,
-                                height = 40.dp,
-                            )
-                        }
-                        if (onOpenSettings != null) {
-                            CircleButton(
-                                icon = Symbols.settings,
-                                contentDescription = "Honeycomb settings",
-                                onClick = onOpenSettings,
-                                modifier = Modifier.testTag("apps-settings"),
-                                size = 40.dp,
-                            )
-                        }
                     }
                 }
             }
@@ -1132,8 +1113,6 @@ fun AppGridScreen(
                 crownKeys = rowSteps,
                 onTap = { i, from -> onOpen(shown[i].component, from) },
                 onListView = onListView,
-                onOpenBlock = onOpenBlock,
-                onOpenSettings = onOpenSettings,
                 topPadding = statusBarInset + 8.dp,
                 onLongPress = { i -> menuApp = shown.getOrNull(i) },
                 onMove = onMove,

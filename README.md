@@ -60,7 +60,7 @@ There are six faces to pick from: Stacked, Info, Split, Hour, Classic and Plain.
 
 ### Built-in Block (Feeds & Websites, 100% on-device)
 
-Honeycomb includes an optional **Block** screen (1 tap from All Apps, Control Centre, Search, or the **Block** Quick Settings tile):
+Honeycomb includes a built-in **Block** app right in your app grid (and in Control Centre & Quick Settings):
 - **Short-form feeds & addictive tabs:** Block Instagram Reels/Explore, YouTube Shorts, Snapchat Spotlight, TikTok, and more — or add a pause/limit before opening distracting apps.
 - **Zero-VPN website blocking:** Block distracting domains or toggle built-in categories (Social, News, Video, Shopping, Adult) with per-site controls and custom domains — all locally on-device with no VPN and no external server.
 - **Strict mode:** Optional 24-hour cooldown before a block rule can be loosened or turned off.

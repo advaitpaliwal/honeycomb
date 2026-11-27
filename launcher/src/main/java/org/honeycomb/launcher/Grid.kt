@@ -82,6 +82,9 @@ object AppCache {
     }
 }
 
+private val BUILTIN_APPS = setOf(FeedsActivity::class.java.name)
+private fun includeInAppList(pkg: String, cls: String): Boolean = !isInternal(pkg) || cls in BUILTIN_APPS
+
 fun installedApps(ctx: Context): List<App> {
     val pm = ctx.packageManager
     val px = iconPx(ctx)
@@ -90,7 +93,7 @@ fun installedApps(ctx: Context): List<App> {
 
     // 1. Primary user launchable activities
     pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
-        .filter { !isInternal(it.activityInfo.packageName) }
+        .filter { includeInAppList(it.activityInfo.packageName, it.activityInfo.name) }
         .forEach { ri ->
             val comp = ComponentName(ri.activityInfo.packageName, ri.activityInfo.name)
             if (comp !in seen) {
@@ -110,7 +113,7 @@ fun installedApps(ctx: Context): List<App> {
         la?.profiles?.forEach { profile ->
             la.getActivityList(null, profile).forEach { info ->
                 val comp = info.componentName
-                if (!isInternal(comp.packageName) && comp !in seen) {
+                if (includeInAppList(comp.packageName, comp.className) && comp !in seen) {
                     val art = info.getIcon(android.util.DisplayMetrics.DENSITY_XXXHIGH)
                     val crop = planIcon(art)
                     seen[comp] = App(
