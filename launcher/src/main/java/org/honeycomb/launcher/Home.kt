@@ -866,7 +866,10 @@ fun AppListScreen(
                             }
                         },
                         focusKey = searchFocusKey + pullSearchKey,
-                        onFocused = onSearchFocused,
+                        onFocused = {
+                            pullSearchKey = 0
+                            onSearchFocused()
+                        },
                         modifier = Modifier
                             .padding(horizontal = 4.dp, vertical = 6.dp)
                             .testTag("app-search"),
@@ -997,7 +1000,10 @@ fun AppGridScreen(
                 }
             },
             focusKey = searchFocusKey + pullSearchKey,
-            onFocused = onSearchFocused,
+            onFocused = {
+                pullSearchKey = 0
+                onSearchFocused()
+            },
             modifier = Modifier
                 .padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 12.dp)
                 .testTag("app-search"),

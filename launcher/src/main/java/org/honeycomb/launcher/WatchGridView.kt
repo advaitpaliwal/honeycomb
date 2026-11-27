@@ -166,12 +166,21 @@ internal fun rememberPullToSearchNestedScroll(
     val state = remember(px, view) {
         object : NestedScrollConnection {
             var pullDownPx = 0f
+            var startedAtTop = false
             var scrolledContentInGesture = false
             var fired = false
-            private val thresholdPx = 56f * px
+            private val thresholdPx = 72f * px
+
+            fun onDragStart(atTopNow: Boolean) {
+                pullDownPx = 0f
+                startedAtTop = atTopNow
+                scrolledContentInGesture = !atTopNow
+                fired = false
+            }
 
             fun reset() {
                 pullDownPx = 0f
+                startedAtTop = false
                 scrolledContentInGesture = false
                 fired = false
             }
@@ -182,15 +191,15 @@ internal fun rememberPullToSearchNestedScroll(
                 source: NestedScrollSource,
             ): Offset {
                 if (source != NestedScrollSource.UserInput) return Offset.Zero
-                if (consumed.y < -3f) {
+                if (consumed.y < -0.5f) {
                     scrolledContentInGesture = true
                     pullDownPx = 0f
                     curDismiss()
-                } else if (consumed.y > 1f) {
-                    // Regular scroll up toward the top — never hijack the end of a regular scroll into Search.
+                } else if (consumed.y > 0.5f) {
+                    // Regular scroll up toward the top — never hijack a regular scroll into Search.
                     scrolledContentInGesture = true
                     pullDownPx = 0f
-                } else if (!scrolledContentInGesture && curEnabled() && curAtTop() && available.y > 0f) {
+                } else if (startedAtTop && !scrolledContentInGesture && curEnabled() && curAtTop() && available.y > 0f) {
                     // Pure overscroll started while already resting at the top with Search visible.
                     pullDownPx += available.y
                     if (!fired && pullDownPx >= thresholdPx) {
@@ -214,7 +223,7 @@ internal fun rememberPullToSearchNestedScroll(
         }
     }
     LaunchedEffect(isDragging) {
-        if (!isDragging) state.reset()
+        if (isDragging) state.onDragStart(curAtTop()) else state.reset()
     }
     return state
 }
