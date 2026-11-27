@@ -20,10 +20,10 @@
 <img src="docs/images/face-info.png" width="150" alt="Info face: date, time, a running timer and the song playing">
 <br><br>
 <img src="docs/images/dynamic-grid.png" width="150" alt="Tap the face: your most used apps in a cluster">&nbsp;
-<img src="docs/images/all-apps.png" width="150" alt="All your apps in one honeycomb grid">&nbsp;
-<img src="docs/images/smart-stack.png" width="150" alt="Swipe up: the Smart Stack with a running timer and a calendar widget">&nbsp;
-<img src="docs/images/control-centre.png" width="150" alt="Control Centre: Wi-Fi, Bluetooth, flashlight and more">&nbsp;
-<img src="docs/images/notification-centre.png" width="150" alt="Notification Centre: your notifications in one list">
+<img src="docs/images/all-apps.png" width="150" alt="All your apps in an Apple Watch-style honeycomb grid">&nbsp;
+<img src="docs/images/list-view.png" width="150" alt="A-Z list view with search and right-edge scrubber">&nbsp;
+<img src="docs/images/smart-stack.png" width="150" alt="Swipe up: the Smart Stack with a live countdown timer and Now Playing">&nbsp;
+<img src="docs/images/control-centre.png" width="150" alt="Control Centre: Wi-Fi, Bluetooth, flashlight and more">
 
 </div>
 

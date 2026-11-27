@@ -14,4 +14,4 @@
 3. **Design Language & Quality Gates:**
    - Respect `DesignLanguageTest.kt`: outside `design/`, never use raw `Color(...)`, `Color.White`/`Color.Black`, `RoundedCornerShape(...)`, `TextStyle(...)`, `fontSize =`, or `tween(<digit>)`.
    - Before releasing, always pass `./gradlew :launcher:testDebugUnitTest :launcher:lintVitalApp :launcher:assembleApp` with `ANDROID_HOME` set.
-   - Install signed GitHub Release APKs directly onto Advait's connected Pixel 9a over ADB after verifying SHA-256; never take screenshots of his physical phone.
+   - Verify SHA-256 checksums before installing signed GitHub Release APKs onto physical test devices.
