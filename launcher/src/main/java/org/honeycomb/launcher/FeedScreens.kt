@@ -437,6 +437,20 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                             modifier = Modifier.padding(bottom = 8.dp),
                         )
                     }
+                    if (!accessEnabled) {
+                        item(key = "access-banner") {
+                            NavSummaryRow(
+                                title = "Accessibility is off",
+                                valueText = "Turn on to block",
+                                index = 0,
+                                count = 1,
+                                glyph = Symbols.block,
+                                accentActive = true,
+                                onClick = onEnableAccess,
+                                modifier = Modifier.padding(bottom = 8.dp).testTag("block-access-banner"),
+                            )
+                        }
+                    }
 
                     // Group 1: In-App Feeds (Android 16 Material 3 segmented list)
                     item(key = "feeds-kicker") { SectionKicker("In-app feeds") }
@@ -712,7 +726,15 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                                     subtitle = if (!isCustom && byCategory) "Blocked by category" else null,
                                     checked = isCustom || byCategory,
                                     onCheckedChange = { next ->
-                                        if (!locked || next) onToggleCustomApp(app.packageName, next)
+                                        if (!locked || next) {
+                                            if (!next && byCategory && !isCustom) {
+                                                enabledAppCats.forEach { catId ->
+                                                    onToggleAppCategoryExcluded(catId, app.packageName, true)
+                                                }
+                                            } else {
+                                                onToggleCustomApp(app.packageName, next)
+                                            }
+                                        }
                                     },
                                     index = idx,
                                     count = sortedCandidates.size,

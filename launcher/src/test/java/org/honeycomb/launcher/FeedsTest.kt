@@ -146,6 +146,18 @@ class FeedRulesTest {
         // Reddit, Threads, and LinkedIn rules
         val reddit = rule("com.reddit.frontpage")
         assertEquals(GateAction.BACK, chooseAction(reddit, false, listOf(SeenNode("com.reddit.frontpage:id/video_player_view", true))))
+        // Reddit Home feed is blocked by default, and tabLabel("Inbox") -> "Messages" must still match Reddit's allowTabs
+        assertTrue(reddit.features.first { it.id == "home" }.defaultBlocked)
+        val redditDefault = effectiveRule(reddit, reddit.features.filter { it.defaultBlocked }.map { it.id }.toSet())!!
+        val redditTabs = listOf(
+            SeenTab(tabLabel("Home"), true),
+            SeenTab(tabLabel("Communities"), false),
+            SeenTab(tabLabel("Chat"), false),
+            SeenTab(tabLabel("Inbox"), false),
+        )
+        assertEquals(3, tabRedirect(redditDefault.allowTabs, redditTabs, redditDefault.blockTabs))
+        assertNull(tabRedirect(redditDefault.allowTabs, redditTabs.map { it.copy(selected = it.label == "Messages") }, redditDefault.blockTabs))
+        assertTrue("com.google.android.googlequicksearchbox" in BROWSER_PACKAGES)
         val threads = rule("com.instagram.barcelona")
         assertTrue(blocksWholeApp(threads))
         val linkedin = rule("com.linkedin.android")

@@ -62,8 +62,11 @@ val BROWSER_PACKAGES = setOf(
     "com.android.chrome",
     "com.chrome.beta",
     "com.chrome.dev",
+    "com.google.android.googlequicksearchbox",
     "com.brave.browser",
+    "com.brave.browser_beta",
     "org.mozilla.firefox",
+    "org.mozilla.firefox_beta",
     "org.mozilla.fenix",
     "org.mozilla.focus",
     "com.sec.android.app.sbrowser",
@@ -75,11 +78,12 @@ val BROWSER_PACKAGES = setOf(
     "app.vanadium.browser",
     "org.cromite.cromite",
     "com.kiwibrowser.browser",
-    "org.bromite.bromite",
+    "com.bromite.bromite",
     "mark.via.gp",
     "com.lemurbrowser.exts",
     "com.naver.whale",
     "com.mi.globalbrowser",
+    "com.ecosia.android",
 )
 
 /** One individually toggleable short-form video source inside the `Shorts & Reels` website category. */
@@ -331,9 +335,11 @@ fun matchesAppCategory(
     return false
 }
 
-/** Omnibox / toolbar URL text view IDs across Chromium, Gecko/Firefox, Samsung Internet, DuckDuckGo, and Brave. */
+/** Omnibox / toolbar URL text view IDs across Chromium, Custom Tabs, Gecko/Firefox, Samsung Internet, DuckDuckGo, and Brave. */
 val BROWSER_URL_IDS = listOf(
     "url_bar",
+    "origin_bar",
+    "toolbar_url",
     "location_bar_edit_text",
     "mozac_browser_toolbar_url_view",
     "mozac_browser_toolbar_edit_url_view",
@@ -451,21 +457,27 @@ val FEED_RULES = listOf(
     ),
     AppRule(
         "com.reddit.frontpage", "Reddit", "Search and inbox", "back",
-        hints = listOf("video_player_view", "media_pager"),
-        allowTabs = listOf("Inbox", "Chat", "Communities"),
-        blockTabs = listOf("Home", "Popular", "Watch"),
-        fallbackAllowTabs = listOf("Communities", "Home"),
+        hints = listOf("video_player_view", "media_pager", "watch_feed"),
+        allowTabs = listOf(
+            "Messages", "Inbox", "Chat", "Communities", "Answers",
+            "bottom_nav_inbox", "bottom_nav_chat", "bottom_nav_communities",
+        ),
+        blockTabs = listOf(
+            "Home", "Popular", "Watch", "Latest", "News",
+            "bottom_nav_home", "bottom_nav_popular", "bottom_nav_watch",
+        ),
+        fallbackAllowTabs = listOf("Communities", "Answers", "Home"),
         features = listOf(
             FeatureRule(
                 "watch", "Block Watch & Popular", "Closes vertical video player and Popular feed",
-                hints = listOf("video_player_view", "media_pager"),
-                blockTabs = listOf("Popular", "Watch"),
+                hints = listOf("video_player_view", "media_pager", "watch_feed"),
+                blockTabs = listOf("Popular", "Watch", "News", "bottom_nav_popular", "bottom_nav_watch"),
                 defaultBlocked = true,
             ),
             FeatureRule(
-                "home", "Block Home feed", "Redirects Home to Inbox & Communities",
-                blockTabs = listOf("Home"),
-                defaultBlocked = false,
+                "home", "Block Home feed", "Redirects Home to Inbox, Chat & Communities",
+                blockTabs = listOf("Home", "Latest", "bottom_nav_home"),
+                defaultBlocked = true,
             ),
         ),
     ),

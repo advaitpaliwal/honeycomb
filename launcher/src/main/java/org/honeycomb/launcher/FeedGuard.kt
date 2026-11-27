@@ -53,15 +53,26 @@ class FeedGuard : AccessibilityService() {
         val target = pendingPackage ?: return@Runnable
         pendingPackage = null
         try {
-            val rule = FeedSwitches.activeRule(this, target)
-            val root = if (rule != null) activeRootFor(rule.packageName) else null
-            if (rule == null || root == null) return@Runnable
+            val rule = FeedSwitches.activeRule(this, target) ?: return@Runnable
+            val root = activeRootFor(rule.packageName)
+            if (root == null) {
+                if (blocksWholeApp(rule) && foreground == rule.packageName) {
+                    act(rule)
+                } else {
+                    timer.foundNothing()?.let { delay ->
+                        pendingPackage = target
+                        handler.postDelayed(check, delay)
+                    }
+                }
+                return@Runnable
+            }
             // Prefer 1-hop tab redirect over Back when a blocked tab (e.g. Reels/Explore/Home) is selected
             // so we jump straight to Messages/Profile instead of bouncing through Home.
             when {
                 blocksWholeApp(rule) -> act(rule)
                 redirectTabs(rule, root) -> Unit
                 seesHint(rule, root) -> act(rule)
+                seesBlockedRedditFeed(rule, root) -> act(rule)
                 else -> timer.foundNothing()?.let { delay ->
                     pendingPackage = target
                     handler.postDelayed(check, delay)
@@ -81,7 +92,11 @@ class FeedGuard : AccessibilityService() {
         if (pkg in BROWSER_PACKAGES && FeedSwitches.hasActiveBrowserRules(this) &&
             !FeedSwitches.isCustomAppBlocked(this, pkg) && !FeedSwitches.isAppBlockedByCategory(this, pkg)
         ) {
-            if (windowChanged || event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            if (windowChanged ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+            ) {
                 pendingBrowserPkg = pkg
                 handler.removeCallbacks(browserCheck)
                 handler.postDelayed(browserCheck, if (windowChanged) 60L else BROWSER_SETTLE_MS)
@@ -89,7 +104,8 @@ class FeedGuard : AccessibilityService() {
             return
         }
         val rule = FeedSwitches.activeRule(this, pkg) ?: return
-        if (blocksWholeApp(rule) && chooseAction(rule, windowChanged, emptyList()) == null) return
+        // Never skip non-windowChanged events for whole-app blocks: a missed WINDOW_STATE_CHANGED
+        // (e.g. cold-launch race or Recents switch) must never leave a blocked app scrollable.
         schedule(pkg, windowChanged)
     }
 
@@ -146,14 +162,18 @@ class FeedGuard : AccessibilityService() {
         var hit = false
         for (id in exactIds(pkg, BROWSER_URL_IDS)) {
             val found = root.findAccessibilityNodeInfosByViewId(id)
-            if (found.any { !it.isFocused && it.isVisibleToUser && isWebsiteBlocked(it.text?.toString(), shorts, categories, domains, excluded, added) }) {
+            // Chrome hides url_bar while scrolling down (isVisibleToUser=false) while keeping the active tab's URL
+            // in url_bar.text, so match unfocused URL-bar nodes regardless of toolbar collapse.
+            if (found.any { !it.isFocused && isWebsiteBlocked(it.text?.toString(), shorts, categories, domains, excluded, added) }) {
                 hit = true
                 break
             }
         }
         if (!hit) {
-            val topLimit = (resources.displayMetrics.heightPixels * 0.22f).toInt()
-            hit = walkBrowserUrlBar(root, topLimit, shorts, categories, domains, excluded, added, intArrayOf(120))
+            val screenH = resources.displayMetrics.heightPixels
+            val topLimit = (screenH * 0.22f).toInt()
+            val bottomStart = (screenH * 0.78f).toInt()
+            hit = walkBrowserUrlBar(root, topLimit, bottomStart, shorts, categories, domains, excluded, added, intArrayOf(180))
         }
         if (!hit) return
         if (now - lastBrowserBackAt >= ESCALATE_MS) browserBacksInARow = 0
@@ -174,6 +194,7 @@ class FeedGuard : AccessibilityService() {
     private fun walkBrowserUrlBar(
         node: AccessibilityNodeInfo,
         topLimit: Int,
+        bottomStart: Int,
         shorts: Boolean,
         categories: Set<String>,
         domains: Set<String>,
@@ -186,11 +207,12 @@ class FeedGuard : AccessibilityService() {
         if (!node.isFocused && !node.text.isNullOrBlank()) {
             val r = Rect()
             node.getBoundsInScreen(r)
-            if (r.top in 0..topLimit && isWebsiteBlocked(node.text?.toString(), shorts, categories, domains, excluded, added)) return true
+            val inBarBand = (r.top in 0..topLimit) || (r.bottom >= bottomStart && r.height() in 1..(bottomStart / 3))
+            if (inBarBand && isWebsiteBlocked(node.text?.toString(), shorts, categories, domains, excluded, added)) return true
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            if (walkBrowserUrlBar(child, topLimit, shorts, categories, domains, excluded, added, budget)) return true
+            if (walkBrowserUrlBar(child, topLimit, bottomStart, shorts, categories, domains, excluded, added, budget)) return true
         }
         return false
     }
@@ -298,9 +320,68 @@ class FeedGuard : AccessibilityService() {
         val seen = tabs.map { SeenTab(tabLabel(nodeLabel(it)), isNodeSelected(it), it.viewIdResourceName) }
         val target = tabRedirect(rule.allowTabs, seen, rule.blockTabs)
             ?: fallbackInstagramHomeTarget(root, rule, seen)
+            ?: fallbackRedditFeedTarget(root, rule, seen)
             ?: return false
         act(rule, tabs[target])
         return true
+    }
+
+    /**
+     * Modern Reddit Android renders its feed selector ("Home", "Popular", "Watch", "Latest", "News") in the top header
+     * and often uses Compose bottom tabs without setting View.isSelected=true. When a blocked Reddit feed header is
+     * visible and no allowed tab is selected, redirect straight to Inbox/Chat/Communities.
+     */
+    private fun fallbackRedditFeedTarget(root: AccessibilityNodeInfo, rule: AppRule, seen: List<SeenTab>): Int? {
+        if (rule.packageName != "com.reddit.frontpage") return null
+        if (seen.any { it.selected && tabMatchesAny(it, rule.allowTabs) }) return null
+        val blockedHeaders = rule.blockTabs
+            .filter { '_' !in it && it != FIRST_TAB }
+            .map { it.lowercase() }
+            .toSet()
+        if (blockedHeaders.isEmpty()) return null
+        val headerBottom = (resources.displayMetrics.heightPixels * 0.18f).toInt()
+        if (!hasHeaderFeedLabel(root, headerBottom, blockedHeaders, intArrayOf(180))) return null
+        return rule.allowTabs.firstNotNullOfOrNull { name ->
+            seen.indexOfFirst { tabMatchesAny(it, listOf(name)) }.takeIf { it >= 0 }
+        }
+    }
+
+    /**
+     * When Reddit collapses its bottom bar during scrolling, [redirectTabs] has no tab to tap; if a blocked feed header
+     * ("Home", "Popular", "Watch", "Latest", "News") is still visible at the top, back out instead of letting scrolling continue.
+     */
+    private fun seesBlockedRedditFeed(rule: AppRule, root: AccessibilityNodeInfo): Boolean {
+        if (rule.packageName != "com.reddit.frontpage") return false
+        val blockedHeaders = rule.blockTabs
+            .filter { '_' !in it && it != FIRST_TAB }
+            .map { it.lowercase() }
+            .toSet()
+        if (blockedHeaders.isEmpty()) return false
+        val headerBottom = (resources.displayMetrics.heightPixels * 0.18f).toInt()
+        return hasHeaderFeedLabel(root, headerBottom, blockedHeaders, intArrayOf(180))
+    }
+
+    private fun hasHeaderFeedLabel(
+        node: AccessibilityNodeInfo,
+        headerBottom: Int,
+        blockedHeaders: Set<String>,
+        budget: IntArray,
+    ): Boolean {
+        if (budget[0] <= 0 || !node.isVisibleToUser) return false
+        budget[0]--
+        if (!node.isFocused && !node.isEditable) {
+            val text = (node.text ?: node.contentDescription)?.toString()?.trim()?.lowercase()
+            if (text != null && text in blockedHeaders) {
+                val r = Rect()
+                node.getBoundsInScreen(r)
+                if (r.top in 0..headerBottom && r.width() > 20 && r.height() > 16) return true
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (hasHeaderFeedLabel(child, headerBottom, blockedHeaders, budget)) return true
+        }
+        return false
     }
 
     /**
@@ -327,21 +408,22 @@ class FeedGuard : AccessibilityService() {
         }
     }
 
-    /** Reads contentDescription or text from [node] or its immediate labeled child. */
-    private fun nodeLabel(node: AccessibilityNodeInfo): CharSequence? {
+    /** Reads contentDescription or text from [node] or its descendant label (handles Compose NavigationBarItem children). */
+    private fun nodeLabel(node: AccessibilityNodeInfo, depth: Int = 3): CharSequence? {
         node.contentDescription?.takeIf { it.isNotBlank() }?.let { return it }
         node.text?.takeIf { it.isNotBlank() }?.let { return it }
+        if (depth <= 0) return null
         for (i in 0 until node.childCount) {
             val c = node.getChild(i) ?: continue
-            c.contentDescription?.takeIf { it.isNotBlank() }?.let { return it }
-            c.text?.takeIf { it.isNotBlank() }?.let { return it }
+            nodeLabel(c, depth - 1)?.let { return it }
         }
         return null
     }
 
-    /** True when [node] or a direct/grandchild icon inside it is marked selected (Instagram sets selected on inner icons). */
-    private fun isNodeSelected(node: AccessibilityNodeInfo, depth: Int = 2): Boolean {
-        if (node.isSelected) return true
+    /** True when [node] or a descendant icon/tab reports selected, checked, or Compose "Selected" stateDescription. */
+    private fun isNodeSelected(node: AccessibilityNodeInfo, depth: Int = 3): Boolean {
+        if (node.isSelected || node.isChecked) return true
+        if (node.stateDescription?.toString()?.equals("selected", ignoreCase = true) == true) return true
         if (depth <= 0) return false
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
@@ -403,7 +485,7 @@ class FeedGuard : AccessibilityService() {
     ) {
         if (budget[0] <= 0 || !node.isVisibleToUser) return
         budget[0]--
-        if (node.isClickable && (!node.contentDescription.isNullOrBlank() || !node.text.isNullOrBlank())) {
+        if (node.isClickable && nodeLabel(node) != null) {
             val r = Rect()
             node.getBoundsInScreen(r)
             if (r.top >= navTop && r.width() > 32 && r.height() > 32) {
