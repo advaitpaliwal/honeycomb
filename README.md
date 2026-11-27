@@ -63,6 +63,12 @@ Honeycomb includes an optional **Block** screen (accessible from Control Centre,
 - **Zero-VPN website blocking:** Block distracting domains or toggle built-in categories (Social, News, Video, Shopping, Adult) with per-site controls and custom domains — all locally on-device with no VPN and no external server.
 - **Strict mode:** Optional 24-hour cooldown before a block rule can be loosened or turned off.
 
+<div align="center">
+<img src="docs/images/block-main.png" width="170" alt="Honeycomb Block: in-app feeds, blocked apps, websites, pause before opening, and 24-hour strict mode">&nbsp;&nbsp;
+<img src="docs/images/block-instagram.png" width="170" alt="Instagram feed toggles: block Reels, Explore, and Home Feed individually">&nbsp;&nbsp;
+<img src="docs/images/block-websites.png" width="170" alt="Zero-VPN website blocking with built-in categories and custom domains">
+</div>
+
 ## Download
 
 **[Download the latest APK](https://github.com/advaitpaliwal/honeycomb/releases/latest)** (Android 14 or newer).
