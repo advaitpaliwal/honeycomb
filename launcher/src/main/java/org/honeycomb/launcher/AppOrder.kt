@@ -239,11 +239,11 @@ object AppOrder {
     /** All apps opens in the view last chosen: true for Grid View, false for List View; [default] until one is chosen. */
     fun savedGrid(ctx: Context, default: Boolean = false) = prefs(ctx).getBoolean(KEY_GRID, default)
     fun saveGrid(ctx: Context, grid: Boolean) = prefs(ctx).edit().putBoolean(KEY_GRID, grid).commit()
-    /** Where unlocking & Home land by default: 7-App Hub (1-tap access), Honeycomb Grid, or Watch Face. */
+    /** Where unlocking & Home land by default: Watch Face (watch-first), 7-App Hub, or Honeycomb Grid. */
     fun savedHomeStart(ctx: Context): HomeStartMode =
         prefs(ctx).getString(KEY_HOME_START, null)
             ?.let { name -> HomeStartMode.entries.firstOrNull { it.name == name } }
-            ?: HomeStartMode.FAVOURITES
+            ?: HomeStartMode.FACE
     fun saveHomeStart(ctx: Context, mode: HomeStartMode) =
         prefs(ctx).edit().putString(KEY_HOME_START, mode.name).commit()
     fun clear(ctx: Context) = prefs(ctx).edit().clear().commit()

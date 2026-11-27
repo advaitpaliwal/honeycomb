@@ -35,8 +35,8 @@ import kotlinx.coroutines.withContext
  * Smart Stack rising over the Face, and Notification / Control sheets pulled from the top edge.
  */
 class LauncherActivity : ComponentActivity() {
-    private var homeDepth by mutableStateOf(Depth.Favourites)
-    private var space by mutableStateOf(Space(depth = Depth.Favourites))
+    private var homeDepth by mutableStateOf(Depth.Face)
+    private var space by mutableStateOf(Space(depth = Depth.Face))
 
     /** A finger-tracked swipe in progress: which, and how far (px along it). */
     private var pull by mutableStateOf<Pair<Input, Float>?>(null)
