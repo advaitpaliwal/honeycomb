@@ -126,6 +126,21 @@ fun installedApps(ctx: Context): List<App> {
         }
     }
 
+    // 3. Include Honeycomb's own settings app ("Honeycomb") right in the grid, list, and search
+    val settingsComp = ComponentName(ctx.packageName, HoneycombSettingsActivity::class.java.name)
+    if (settingsComp !in seen) {
+        runCatching {
+            val art = ctx.resources.getDrawableForDensity(R.mipmap.ic_launcher, android.util.DisplayMetrics.DENSITY_XXXHIGH, ctx.theme)
+                ?: ctx.applicationInfo.loadIcon(pm)
+            val crop = planIcon(art)
+            seen[settingsComp] = App(
+                "Honeycomb",
+                settingsComp,
+                circleIcon(art, px, crop, themed).let { it.copy(Bitmap.Config.HARDWARE, false) ?: it }.asImageBitmap(),
+            )
+        }
+    }
+
     return seen.values
         .sortedWith(compareBy({ first.indexOf(it.component.packageName).let { i -> if (i < 0) Int.MAX_VALUE else i } }, { it.label.lowercase() }))
 }
