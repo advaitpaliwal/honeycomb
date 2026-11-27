@@ -24,7 +24,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -66,24 +66,64 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /*
- * 120fps All-Apps circular icon grid built on Compose's native LazyVerticalGrid + Calvin-LL/Reorderable 3.1.0:
- *   - Clean 4-column round-icon grid with exact 1:1 Reorderable hitboxes, native cross-row animateItem() glides,
- *     built-in edge auto-scroll, and smooth spring drop-settle.
- *   - Normal browsing: tap launches immediately; press & hold drags directly into any slot (releasing without moving
- *     opens the Material 3 quick-actions sheet).
- *   - Explicit jiggle mode: DragOwners.editingLock blocks root screen swipes; draggableHandle gives instant zero-delay
- *     drag on every icon with a clean, subtle rotation-only tilt.
+ * True Apple Watch (watchOS 10+) staggered 3-4-3-4 hexagonal Honeycomb grid built on Compose's native
+ * LazyVerticalGrid(columns = GridCells.Fixed(8)) + Calvin-LL/Reorderable 3.1.0:
+ *   - Even rows (3 icons): [1-col spacer] [2-col app] [2-col app] [2-col app] [1-col spacer] = 8 spans.
+ *   - Odd rows  (4 icons): [2-col app] [2-col app] [2-col app] [2-col app] = 8 spans.
+ *   - Every partial last row is centred with symmetric spacers so every row sums to 8 spans.
+ *   - Every app icon is a top-level ReorderableItem keyed by stable appKey (never inside nested Row composables),
+ *     so Compose's native animateItem() glides icons diagonally across 3- and 4-icon rows at 120fps with exact
+ *     1:1 Reorderable hitboxes, built-in edge auto-scroll, and spring drop-settle.
  */
 
-private const val GRID_COLUMNS = 4
+private const val HONEYCOMB_GRID_SPANS = 8
 private const val ICON_D = 68f
-private const val ICON_GAP = 14f
+private const val ROW_GAP = 5f // 68 + 5 = 73 dp vertical pitch ≈ 84 * sqrt(3)/2 -> uniform ~16 dp horizontal & diagonal gap
 
 internal val REORDER_OFFSET_SPRING = spring<Offset>(dampingRatio = 0.78f, stiffness = 420f)
 internal val DROP_SETTLE_SPRING = spring<Offset>(dampingRatio = 0.80f, stiffness = 460f)
 internal val PICKUP_SCALE_SPRING = spring<Float>(dampingRatio = 0.70f, stiffness = 480f)
 
-/** Clean, subtle iOS-style rotation-only tilt for explicit edit mode (no erratic X/Y buzzing). */
+internal sealed interface HoneycombCell {
+    val gridKey: String
+    val span: Int
+
+    data class Spacer(override val gridKey: String, override val span: Int) : HoneycombCell
+    data class App(val appIndex: Int, val appKey: String) : HoneycombCell {
+        override val gridKey: String get() = appKey
+        override val span: Int get() = 2
+    }
+}
+
+/**
+ * Packs [keys] into Apple Watch's alternating 3-4-3-4 staggered honeycomb rows on an 8-column grid.
+ * Even rows hold up to 3 icons (shifted half a column via 1-span side spacers); odd rows hold up to 4 icons.
+ * Every row sums to exactly 8 spans, and partial trailing rows stay symmetrically centred.
+ */
+internal fun honeycombCells(keys: List<String>): List<HoneycombCell> {
+    if (keys.isEmpty()) return emptyList()
+    val out = ArrayList<HoneycombCell>(keys.size + (keys.size / 3) + 2)
+    var i = 0
+    var row = 0
+    while (i < keys.size) {
+        val capacity = if (row % 2 == 0) 3 else 4
+        val count = minOf(capacity, keys.size - i)
+        val freeSpans = HONEYCOMB_GRID_SPANS - count * 2
+        val leftPad = freeSpans / 2
+        val rightPad = freeSpans - leftPad
+        if (leftPad > 0) out.add(HoneycombCell.Spacer("hc-pad-l-$row", leftPad))
+        for (c in 0 until count) {
+            val idx = i + c
+            out.add(HoneycombCell.App(idx, keys[idx]))
+        }
+        if (rightPad > 0) out.add(HoneycombCell.Spacer("hc-pad-r-$row", rightPad))
+        i += count
+        row++
+    }
+    return out
+}
+
+/** Clean, subtle iOS/watchOS-style rotation-only tilt for explicit edit mode (no erratic X/Y buzzing). */
 @Composable
 internal fun rememberGentleJiggle(on: Boolean, seed: Int): Float {
     if (!on) return 0f
@@ -132,6 +172,7 @@ fun WatchGrid(
     val stableKeys = remember(keys, labels, icons.size) {
         if (keys.size == icons.size) keys else List(icons.size) { i -> "${labels.getOrNull(i).orEmpty()}#$i" }
     }
+    val cells = remember(stableKeys) { honeycombCells(stableKeys) }
     val gridState = rememberLazyGridState()
     val density = LocalDensity.current
     val px = density.density
@@ -146,7 +187,6 @@ fun WatchGrid(
     val currentEditing by rememberUpdatedState(editing)
     val currentOnEditing by rememberUpdatedState(onEditing)
     val currentKeys by rememberUpdatedState(stableKeys)
-    val headerCount by rememberUpdatedState(if (header != null) 1 else 0)
 
     val slotRectsWindow = remember { mutableStateMapOf<String, android.graphics.Rect>() }
     var swappedInDrag by remember { mutableStateOf(false) }
@@ -154,10 +194,11 @@ fun WatchGrid(
     var anyDragging by remember { mutableStateOf(false) }
 
     val reorderableState = rememberReorderableLazyGridState(gridState) { from, to ->
-        val fromIdx = from.index - headerCount
-        val toIdx = to.index - headerCount
-        val size = currentKeys.size
-        if (fromIdx in 0 until size && toIdx in 0 until size && fromIdx != toIdx) {
+        val fromKey = from.key as? String ?: return@rememberReorderableLazyGridState
+        val toKey = to.key as? String ?: return@rememberReorderableLazyGridState
+        val fromIdx = currentKeys.indexOf(fromKey)
+        val toIdx = currentKeys.indexOf(toKey)
+        if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
             swappedInDrag = true
             currentOnMove?.invoke(fromIdx, toIdx)
             view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -181,7 +222,7 @@ fun WatchGrid(
     }
     LaunchedEffect(gridState, crownKeys, px) {
         crownKeys.collect { step ->
-            gridState.animateScrollBy(-step * (ICON_D + ICON_GAP) * px)
+            gridState.animateScrollBy(-step * (ICON_D + ROW_GAP) * px)
         }
     }
     LaunchedEffect(headerScrollKey) {
@@ -202,17 +243,17 @@ fun WatchGrid(
             ),
     ) {
         LazyVerticalGrid(
-            columns = GridCells.Fixed(GRID_COLUMNS),
+            columns = GridCells.Fixed(HONEYCOMB_GRID_SPANS),
             state = gridState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 14.dp,
-                end = 14.dp,
+                start = 12.dp,
+                end = 12.dp,
                 top = topPadding,
                 bottom = scrollBottomInset + if (editing) 84.dp else 28.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(ICON_GAP.dp),
-            horizontalArrangement = Arrangement.spacedBy(ICON_GAP.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(ROW_GAP.dp),
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             if (header != null) {
                 item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
@@ -229,105 +270,118 @@ fun WatchGrid(
             if (overrideBody != null) {
                 overrideBody()
             } else {
-                itemsIndexed(stableKeys, key = { _, k -> k }) { index, appKey ->
-                    ReorderableItem(reorderableState, key = appKey) { isDragging ->
-                        val interactionSource = remember { MutableInteractionSource() }
-                        val scale by animateFloatAsState(
-                            targetValue = if (isDragging) 1.14f else 1f,
-                            animationSpec = PICKUP_SCALE_SPRING,
-                            label = "grid-item-scale",
-                        )
-                        val jiggleRot = rememberGentleJiggle(editing && !isDragging, appKey.hashCode())
-                        val handleModifier = if (currentOnMove != null) {
-                            if (editing) {
-                                Modifier.draggableHandle(
-                                    enabled = true,
-                                    interactionSource = interactionSource,
-                                    onDragStarted = {
-                                        DragOwners.activeDrag = true
-                                        anyDragging = true
-                                        swappedInDrag = false
-                                        dragStartIndex = currentKeys.indexOf(appKey)
-                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                                    },
-                                    onDragStopped = {
-                                        DragOwners.activeDrag = false
-                                        anyDragging = false
-                                        if (swappedInDrag) {
-                                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                                        }
-                                    },
-                                )
-                            } else {
-                                Modifier.longPressDraggableHandle(
-                                    enabled = true,
-                                    interactionSource = interactionSource,
-                                    onDragStarted = {
-                                        DragOwners.activeDrag = true
-                                        anyDragging = true
-                                        swappedInDrag = false
-                                        dragStartIndex = currentKeys.indexOf(appKey)
-                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                                    },
-                                    onDragStopped = {
-                                        DragOwners.activeDrag = false
-                                        anyDragging = false
-                                        if (swappedInDrag) {
-                                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                                        } else if (!currentEditing) {
-                                            val curIdx = currentKeys.indexOf(appKey).takeIf { it >= 0 } ?: dragStartIndex
-                                            if (curIdx >= 0) currentOnLongPress?.invoke(curIdx)
-                                        }
-                                    },
-                                )
-                            }
-                        } else {
-                            Modifier
+                items(
+                    items = cells,
+                    key = { it.gridKey },
+                    span = { GridItemSpan(it.span) },
+                ) { cell ->
+                    when (cell) {
+                        is HoneycombCell.Spacer -> {
+                            Box(Modifier.size(1.dp))
                         }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .zIndex(if (isDragging) 50f else 0f),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(ICON_D.dp)
-                                    .graphicsLayer {
-                                        scaleX = scale
-                                        scaleY = scale
-                                        rotationZ = jiggleRot
-                                    }
-                                    .then(if (isDragging) Modifier.shadow(14.dp, CircleShape, clip = false) else Modifier)
-                                    .clip(CircleShape)
-                                    .then(handleModifier)
-                                    .then(
-                                        if (!editing) {
-                                            Modifier.clickable(
-                                                interactionSource = interactionSource,
-                                                indication = null,
-                                            ) {
-                                                val curIdx = currentKeys.indexOf(appKey)
-                                                if (curIdx >= 0) currentOnTap(curIdx, slotRectsWindow[appKey])
-                                            }
-                                        } else {
-                                            Modifier
-                                        },
-                                    )
-                                    .onGloballyPositioned { coords ->
-                                        val w = coords.boundsInWindow()
-                                        slotRectsWindow[appKey] = android.graphics.Rect(
-                                            w.left.roundToInt(),
-                                            w.top.roundToInt(),
-                                            w.right.roundToInt(),
-                                            w.bottom.roundToInt(),
+                        is HoneycombCell.App -> {
+                            val index = cell.appIndex
+                            val appKey = cell.appKey
+                            ReorderableItem(reorderableState, key = appKey) { isDragging ->
+                                val interactionSource = remember { MutableInteractionSource() }
+                                val scale by animateFloatAsState(
+                                    targetValue = if (isDragging) 1.14f else 1f,
+                                    animationSpec = PICKUP_SCALE_SPRING,
+                                    label = "grid-item-scale",
+                                )
+                                val jiggleRot = rememberGentleJiggle(editing && !isDragging, appKey.hashCode())
+                                val handleModifier = if (currentOnMove != null) {
+                                    if (editing) {
+                                        Modifier.draggableHandle(
+                                            enabled = true,
+                                            interactionSource = interactionSource,
+                                            onDragStarted = {
+                                                DragOwners.activeDrag = true
+                                                anyDragging = true
+                                                swappedInDrag = false
+                                                dragStartIndex = currentKeys.indexOf(appKey)
+                                                view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                            },
+                                            onDragStopped = {
+                                                DragOwners.activeDrag = false
+                                                anyDragging = false
+                                                if (swappedInDrag) {
+                                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                                }
+                                            },
+                                        )
+                                    } else {
+                                        Modifier.longPressDraggableHandle(
+                                            enabled = true,
+                                            interactionSource = interactionSource,
+                                            onDragStarted = {
+                                                DragOwners.activeDrag = true
+                                                anyDragging = true
+                                                swappedInDrag = false
+                                                dragStartIndex = currentKeys.indexOf(appKey)
+                                                view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                            },
+                                            onDragStopped = {
+                                                DragOwners.activeDrag = false
+                                                anyDragging = false
+                                                if (swappedInDrag) {
+                                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                                } else if (!currentEditing) {
+                                                    val curIdx = currentKeys.indexOf(appKey).takeIf { it >= 0 } ?: dragStartIndex
+                                                    if (curIdx >= 0) currentOnLongPress?.invoke(curIdx)
+                                                }
+                                            },
                                         )
                                     }
-                                    .testTag("grid-$index")
-                                    .semantics { contentDescription = labels.getOrNull(index).orEmpty() },
-                            ) {
-                                icons.getOrNull(index)?.let { bmp ->
-                                    Image(bmp, null, Modifier.fillMaxSize())
+                                } else {
+                                    Modifier
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .zIndex(if (isDragging) 50f else 0f),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(ICON_D.dp)
+                                            .graphicsLayer {
+                                                scaleX = scale
+                                                scaleY = scale
+                                                rotationZ = jiggleRot
+                                            }
+                                            .then(if (isDragging) Modifier.shadow(14.dp, CircleShape, clip = false) else Modifier)
+                                            .clip(CircleShape)
+                                            .then(handleModifier)
+                                            .then(
+                                                if (!editing) {
+                                                    Modifier.clickable(
+                                                        interactionSource = interactionSource,
+                                                        indication = null,
+                                                    ) {
+                                                        val curIdx = currentKeys.indexOf(appKey)
+                                                        if (curIdx >= 0) currentOnTap(curIdx, slotRectsWindow[appKey])
+                                                    }
+                                                } else {
+                                                    Modifier
+                                                },
+                                            )
+                                            .onGloballyPositioned { coords ->
+                                                val w = coords.boundsInWindow()
+                                                slotRectsWindow[appKey] = android.graphics.Rect(
+                                                    w.left.roundToInt(),
+                                                    w.top.roundToInt(),
+                                                    w.right.roundToInt(),
+                                                    w.bottom.roundToInt(),
+                                                )
+                                            }
+                                            .testTag("grid-$index")
+                                            .semantics { contentDescription = labels.getOrNull(index).orEmpty() },
+                                    ) {
+                                        icons.getOrNull(index)?.let { bmp ->
+                                            Image(bmp, null, Modifier.fillMaxSize())
+                                        }
+                                    }
                                 }
                             }
                         }

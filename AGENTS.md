@@ -1,4 +1,4 @@
-# AGENTS.md — Honeycomb Launcher (`jello`)
+# AGENTS.md — Honeycomb Launcher
 
 ## Non-Negotiable Engineering Rules
 
