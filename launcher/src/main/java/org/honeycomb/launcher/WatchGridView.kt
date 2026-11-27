@@ -146,13 +146,14 @@ internal fun rememberGentleJiggle(on: Boolean, seed: Int): Float {
 }
 
 /**
- * Native Compose NestedScrollConnection for pull-down-past-top to focus Search (like iOS Spotlight/Settings),
- * while cleanly dismissing the keyboard whenever the user scrolls down into the app list.
+ * Native Compose NestedScrollConnection for true overscroll-past-top to focus Search (never fires during a normal
+ * scroll back up from further down in the list), while dismissing the keyboard when scrolling down into apps.
  */
 @Composable
 internal fun rememberPullToSearchNestedScroll(
     enabled: () -> Boolean,
     isAtTop: () -> Boolean,
+    isDragging: Boolean,
     onPullToSearch: () -> Unit,
     onDismissKeyboard: () -> Unit,
 ): NestedScrollConnection {
@@ -162,11 +163,18 @@ internal fun rememberPullToSearchNestedScroll(
     val curAtTop by rememberUpdatedState(isAtTop)
     val curTrigger by rememberUpdatedState(onPullToSearch)
     val curDismiss by rememberUpdatedState(onDismissKeyboard)
-    return remember(px, view) {
+    val state = remember(px, view) {
         object : NestedScrollConnection {
-            private var pullDownPx = 0f
-            private var fired = false
-            private val thresholdPx = 40f * px
+            var pullDownPx = 0f
+            var scrolledContentInGesture = false
+            var fired = false
+            private val thresholdPx = 56f * px
+
+            fun reset() {
+                pullDownPx = 0f
+                scrolledContentInGesture = false
+                fired = false
+            }
 
             override fun onPostScroll(
                 consumed: Offset,
@@ -175,35 +183,40 @@ internal fun rememberPullToSearchNestedScroll(
             ): Offset {
                 if (source != NestedScrollSource.UserInput) return Offset.Zero
                 if (consumed.y < -3f) {
+                    scrolledContentInGesture = true
                     pullDownPx = 0f
-                    fired = false
                     curDismiss()
-                } else if (curEnabled() && curAtTop() && available.y > 0f) {
+                } else if (consumed.y > 1f) {
+                    // Regular scroll up toward the top — never hijack the end of a regular scroll into Search.
+                    scrolledContentInGesture = true
+                    pullDownPx = 0f
+                } else if (!scrolledContentInGesture && curEnabled() && curAtTop() && available.y > 0f) {
+                    // Pure overscroll started while already resting at the top with Search visible.
                     pullDownPx += available.y
                     if (!fired && pullDownPx >= thresholdPx) {
                         fired = true
                         view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                         curTrigger()
                     }
-                } else if (consumed.y > 0f && !curAtTop()) {
-                    pullDownPx = 0f
                 }
                 return Offset.Zero
             }
 
             override suspend fun onPreFling(available: Velocity): Velocity {
-                pullDownPx = 0f
-                fired = false
+                reset()
                 return Velocity.Zero
             }
 
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-                pullDownPx = 0f
-                fired = false
+                reset()
                 return Velocity.Zero
             }
         }
     }
+    LaunchedEffect(isDragging) {
+        if (!isDragging) state.reset()
+    }
+    return state
 }
 
 @Composable
@@ -284,6 +297,7 @@ fun WatchGrid(
     val pullToSearchConnection = rememberPullToSearchNestedScroll(
         enabled = { onPullToSearch != null && !currentEditing && !anyDragging },
         isAtTop = { gridState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemScrollOffset == 0 },
+        isDragging = gridScrolling,
         onPullToSearch = { onPullToSearch?.invoke() },
         onDismissKeyboard = {
             focusManager.clearFocus(force = true)

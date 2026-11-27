@@ -180,7 +180,7 @@ fun SmartStack(onTop: (Boolean) -> Unit, onOpenMedia: (String) -> Unit) {
                     w.id to (if (info != null) portraitWidgetHeightPx(rows, realDensity) else fallback)
                 }
             }
-            Column(Modifier.fillMaxSize().softTopScrollFade(clearTop = statusBarInset, feather = 12.dp).verticalScroll(scroll).padding(top = statusBarInset + StackTokens.top, bottom = scrollBottomInset).padding(horizontal = StackTokens.side), verticalArrangement = Arrangement.spacedBy(GAP.wp)) {
+            Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(top = statusBarInset + StackTokens.top, bottom = scrollBottomInset).padding(horizontal = StackTokens.side), verticalArrangement = Arrangement.spacedBy(GAP.wp)) {
                 // Date and time header at the top of the Smart Stack, matching watchOS
                 DateClock(ms, Modifier.padding(bottom = StackTokens.clockGap - GAP.wp).testTag("stack-time"))
                 if (items.size == 1) {

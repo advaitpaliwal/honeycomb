@@ -121,7 +121,7 @@ fun NotificationCentre(onEnd: (Boolean) -> Unit) {
         }
         val labels = remember(apps) { apps.orEmpty().associate { it.component.packageName to it.label } }
         val open = remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
-        LazyColumn(Modifier.fillMaxSize().softTopScrollFade(clearTop = cutoutTopInset, feather = 16.dp), state = state,
+        LazyColumn(Modifier.fillMaxSize(), state = state,
             contentPadding = PaddingValues(start = NcSize.side, end = NcSize.side, top = statusBarInset + 12.dp, bottom = scrollBottomInset + NcSize.gap)) {
             // the watch's "Clear All" at the top of the scroll
             if (list.isNotEmpty()) item(key = "clear-all") {

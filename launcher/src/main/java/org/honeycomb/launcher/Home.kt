@@ -825,10 +825,12 @@ fun AppListScreen(
     val px = LocalDensity.current.density
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val listDragging by state.interactionSource.collectIsDraggedAsState()
     var pullSearchKey by remember { mutableIntStateOf(0) }
     val listPullToSearch = rememberPullToSearchNestedScroll(
         enabled = { true },
         isAtTop = { state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0 },
+        isDragging = listDragging,
         onPullToSearch = { pullSearchKey++ },
         onDismissKeyboard = {
             focusManager.clearFocus(force = true)
@@ -843,9 +845,7 @@ fun AppListScreen(
     Backdrop(Modifier.testTag("app-list")) {
         Box(Modifier.fillMaxSize()) {
             LazyColumn(
-                Modifier.fillMaxSize()
-                    .nestedScroll(listPullToSearch)
-                    .softTopScrollFade(clearTop = statusBarInset, feather = 12.dp),
+                Modifier.fillMaxSize().nestedScroll(listPullToSearch),
                 state = state,
                 contentPadding = PaddingValues(
                     start = 16.dp,
@@ -1052,7 +1052,7 @@ fun AppGridScreen(
                         }
                     }
                 },
-                modifier = Modifier.fillMaxSize().softTopScrollFade(clearTop = statusBarInset, feather = 12.dp),
+                modifier = Modifier.fillMaxSize(),
             )
         }
         menuApp?.let { app ->

@@ -605,33 +605,6 @@ val cutoutTopInset: Dp
         return (androidx.compose.foundation.layout.WindowInsets.displayCutout.getTop(d).toFloat() / d.density).dp
     }
 
-/**
- * Whisper-soft feather fade right at the physical camera cutout / top bezel so scrolled icons clear any camera hole
- * without creating an opaque top cutoff block or forehead.
- */
-@Composable
-fun Modifier.softTopScrollFade(clearTop: Dp = cutoutTopInset, feather: Dp = 14.dp): Modifier {
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val clearPx = with(density) { clearTop.toPx() }
-    val solidPx = with(density) { (clearTop + feather).toPx() }
-    return this
-        .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
-        .drawWithContent {
-            drawContent()
-            if (size.height > solidPx && solidPx > 0f) {
-                drawRect(
-                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        (clearPx / size.height).coerceIn(0f, 1f) to Color.Transparent,
-                        (solidPx / size.height).coerceIn(0f, 1f) to HoneycombColors.maskOpaque,
-                        1f to HoneycombColors.maskOpaque,
-                    ),
-                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
-                )
-            }
-        }
-}
-
 /** Sleek iOS-style translucent app search pill floating cleanly over edge-to-edge scrolling apps. */
 @Composable
 fun AppSearchBar(

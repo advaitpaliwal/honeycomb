@@ -344,7 +344,7 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
         // ControlGrid's numbers are watch points
         Box(Modifier.fillMaxSize()) {
             val pt = 1.wp
-            Column(Modifier.fillMaxSize().softTopScrollFade(clearTop = cutoutTopInset, feather = 16.dp).verticalScroll(scroll).padding(top = statusBarInset, bottom = scrollBottomInset), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(top = statusBarInset, bottom = scrollBottomInset), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.height(pt * ControlGrid.CAPSULE_TOP))
                 BatteryCapsule(now, pt)
                 Spacer(Modifier.height(pt * ControlGrid.CAPSULE_GAP))
