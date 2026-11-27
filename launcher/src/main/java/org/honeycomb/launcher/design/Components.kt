@@ -29,6 +29,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -1179,6 +1181,27 @@ fun NativeSwitch(checked: Boolean, modifier: Modifier = Modifier) {
             uncheckedThumbColor = HoneycombColors.outline,
             uncheckedTrackColor = HoneycombColors.background,
             uncheckedBorderColor = HoneycombColors.outline,
+        ),
+    )
+}
+
+/** Native Material 3 Slider synced to Honeycomb's theme (e.g. Control Centre brightness). */
+@Composable
+fun NativeSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+) {
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        valueRange = valueRange,
+        modifier = modifier,
+        colors = SliderDefaults.colors(
+            thumbColor = HoneycombColors.accent,
+            activeTrackColor = HoneycombColors.accent,
+            inactiveTrackColor = HoneycombColors.button,
         ),
     )
 }

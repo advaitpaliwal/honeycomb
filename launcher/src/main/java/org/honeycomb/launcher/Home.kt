@@ -17,6 +17,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -785,6 +786,72 @@ internal fun filterApps(apps: List<App>, query: String): List<App> {
     return prefix.sortedBy { it.label.lowercase() } + contains.sortedBy { it.label.lowercase() }
 }
 
+internal data class QuickSearchAction(
+    val id: String,
+    val label: String,
+    val icon: Icon,
+    val keywords: List<String>,
+)
+
+internal val QUICK_SEARCH_ACTIONS = listOf(
+    QuickSearchAction(
+        id = "block",
+        label = "Honeycomb Block",
+        icon = Symbols.block,
+        keywords = listOf("block", "lock", "reels", "shorts", "feed", "feeds", "website", "websites", "strict"),
+    ),
+    QuickSearchAction(
+        id = "control",
+        label = "Control Centre & Brightness",
+        icon = Symbols.sun,
+        keywords = listOf("brightness", "control", "control centre", "control center", "flashlight", "quiet", "dnd", "wifi", "bluetooth"),
+    ),
+    QuickSearchAction(
+        id = "settings",
+        label = "Honeycomb Settings",
+        icon = Symbols.settings,
+        keywords = listOf("honeycomb", "settings", "update", "updates", "setup", "home"),
+    ),
+)
+
+internal fun matchQuickActions(query: String): List<QuickSearchAction> {
+    val q = query.trim().lowercase()
+    if (q.length < 2) return emptyList()
+    return QUICK_SEARCH_ACTIONS.filter { a ->
+        a.label.lowercase().contains(q) || a.keywords.any { it.startsWith(q) || it.contains(q) }
+    }
+}
+
+@Composable
+private fun QuickActionSearchRow(
+    action: QuickSearchAction,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    androidx.compose.foundation.layout.Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(LIST_ROW.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            Modifier.size(42.dp).clip(CircleShape).background(HoneycombColors.button),
+            contentAlignment = Alignment.Center,
+        ) {
+            Glyph(action.icon, HoneycombColors.label, 20.dp)
+        }
+        BasicText(
+            text = action.label,
+            style = AppRowLabelStyle,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 /**
  * watchOS / iOS-style strictly alphabetical A–Z List View:
  *   - Edge-to-edge scrolling all the way behind the translucent search pill and native top status-bar clock (no opaque top block).
@@ -802,6 +869,9 @@ fun AppListScreen(
     onPicked: (String) -> Unit,
     onOpen: (ComponentName, android.graphics.Rect?) -> Unit,
     onGridView: (() -> Unit)? = null,
+    onOpenBlock: (() -> Unit)? = null,
+    onOpenControl: (() -> Unit)? = null,
+    onOpenSettings: (() -> Unit)? = null,
     retainScroll: () -> Boolean = { false },
     searchFocusKey: Int = 0,
     onSearchFocused: () -> Unit = {},
@@ -818,6 +888,7 @@ fun AppListScreen(
     var query by remember { mutableStateOf("") }
     val trimmed = query.trim()
     val visible = remember(trimmed, sortedApps) { filterApps(sortedApps, trimmed) }
+    val quickMatches = remember(trimmed, pickFor) { if (pickFor == null) matchQuickActions(trimmed) else emptyList() }
     val availableLetters = remember(sortedApps) { sortedApps.map { sectionLetter(it.label) }.toSet() }
     val activeLetter = remember(state.firstVisibleItemIndex, visible) {
         visible.getOrNull((state.firstVisibleItemIndex - 1).coerceAtLeast(0))?.let { sectionLetter(it.label) }
@@ -915,7 +986,23 @@ fun AppListScreen(
                         )
                     }
                 }
-                if (visible.isEmpty() && trimmed.isNotEmpty()) {
+                if (quickMatches.isNotEmpty()) {
+                    itemsIndexed(quickMatches, key = { _, a -> "quick-${a.id}" }) { _, action ->
+                        QuickActionSearchRow(
+                            action = action,
+                            onClick = {
+                                query = ""
+                                when (action.id) {
+                                    "block" -> onOpenBlock?.invoke()
+                                    "control" -> onOpenControl?.invoke()
+                                    "settings" -> onOpenSettings?.invoke()
+                                }
+                            },
+                            modifier = Modifier.testTag("search-quick-${action.id}"),
+                        )
+                    }
+                }
+                if (visible.isEmpty() && quickMatches.isEmpty() && trimmed.isNotEmpty()) {
                     item(key = "no-matches") {
                         SettingsNote(
                             "No apps matching \"$trimmed\"",
@@ -924,11 +1011,30 @@ fun AppListScreen(
                     }
                 }
                 if (switchButton && trimmed.isEmpty()) item(key = "grid-view") {
-                    Box(
+                    androidx.compose.foundation.layout.Row(
                         Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 8.dp),
-                        contentAlignment = Alignment.Center,
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         ViewSwitchButton(showingGrid = false, onSwitch = onGridView!!)
+                        if (onOpenBlock != null) {
+                            CapsuleButton(
+                                text = "Block",
+                                onClick = onOpenBlock,
+                                modifier = Modifier.testTag("apps-block"),
+                                icon = Symbols.block,
+                                height = 40.dp,
+                            )
+                        }
+                        if (onOpenSettings != null) {
+                            CircleButton(
+                                icon = Symbols.settings,
+                                contentDescription = "Honeycomb settings",
+                                onClick = onOpenSettings,
+                                modifier = Modifier.testTag("apps-settings"),
+                                size = 40.dp,
+                            )
+                        }
                     }
                 }
             }
@@ -974,6 +1080,9 @@ fun AppGridScreen(
     onRecommend: (String) -> Unit = {},
     onListView: () -> Unit,
     onOpen: (ComponentName, android.graphics.Rect?) -> Unit,
+    onOpenBlock: (() -> Unit)? = null,
+    onOpenControl: (() -> Unit)? = null,
+    onOpenSettings: (() -> Unit)? = null,
     searchFocusKey: Int = 0,
     onSearchFocused: () -> Unit = {},
 ) {
@@ -987,6 +1096,7 @@ fun AppGridScreen(
     val matches = remember(trimmed, shown) {
         if (trimmed.isEmpty()) emptyList() else filterApps(shown, trimmed)
     }
+    val quickMatches = remember(trimmed) { matchQuickActions(trimmed) }
     androidx.activity.compose.BackHandler(enabled = menuApp != null) { menuApp = null }
     androidx.activity.compose.BackHandler(enabled = menuApp == null && query.isNotEmpty()) { query = "" }
     val searchHeader: @Composable () -> Unit = {
@@ -1022,6 +1132,8 @@ fun AppGridScreen(
                 crownKeys = rowSteps,
                 onTap = { i, from -> onOpen(shown[i].component, from) },
                 onListView = onListView,
+                onOpenBlock = onOpenBlock,
+                onOpenSettings = onOpenSettings,
                 topPadding = statusBarInset + 8.dp,
                 onLongPress = { i -> menuApp = shown.getOrNull(i) },
                 onMove = onMove,
@@ -1032,6 +1144,25 @@ fun AppGridScreen(
                 onPullToSearch = { pullSearchKey++ },
                 overrideBody = if (trimmed.isEmpty()) null else {
                     {
+                        items(
+                            count = quickMatches.size,
+                            key = { idx -> "quick-${quickMatches[idx].id}" },
+                            span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) },
+                        ) { idx ->
+                            val action = quickMatches[idx]
+                            QuickActionSearchRow(
+                                action = action,
+                                onClick = {
+                                    query = ""
+                                    when (action.id) {
+                                        "block" -> onOpenBlock?.invoke()
+                                        "control" -> onOpenControl?.invoke()
+                                        "settings" -> onOpenSettings?.invoke()
+                                    }
+                                },
+                                modifier = Modifier.padding(horizontal = 6.dp).testTag("search-quick-${action.id}"),
+                            )
+                        }
                         items(
                             count = matches.size,
                             key = { idx -> matches[idx].component.flattenToString() },
@@ -1048,7 +1179,7 @@ fun AppGridScreen(
                                 modifier = Modifier.padding(horizontal = 6.dp).testTag("search-hit-${app.component.flattenToString()}"),
                             )
                         }
-                        if (matches.isEmpty()) {
+                        if (matches.isEmpty() && quickMatches.isEmpty()) {
                             item(key = "no-matches", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                                 SettingsNote(
                                     "No apps matching \"$trimmed\"",

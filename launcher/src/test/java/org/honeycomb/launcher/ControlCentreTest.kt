@@ -152,4 +152,15 @@ class ControlCentreTest {
             noneWithRepeat.categories,
         )
     }
+
+    @Test fun searchQuickActionsMatchBlockBrightnessControlAndSettings() {
+        assertEquals(emptyList<String>(), matchQuickActions("b").map { it.id })
+        assertEquals(listOf("block"), matchQuickActions("block").map { it.id })
+        assertEquals(listOf("block"), matchQuickActions("lock").map { it.id })
+        assertEquals(listOf("block"), matchQuickActions("reels").map { it.id })
+        assertEquals(listOf("control"), matchQuickActions("brightness").map { it.id })
+        assertEquals(listOf("control"), matchQuickActions("control").map { it.id })
+        assertEquals(listOf("settings"), matchQuickActions("settings").map { it.id })
+        assertEquals(listOf("settings"), matchQuickActions("update").map { it.id })
+    }
 }

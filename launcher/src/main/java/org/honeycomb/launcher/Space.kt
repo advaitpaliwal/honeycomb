@@ -2,7 +2,9 @@ package org.honeycomb.launcher
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -147,6 +149,8 @@ fun reduce(s: Space, intent: Intent, homeDepth: Depth = Depth.Face): Space = whe
 
 object EdgeSwipe {
     const val EDGE_DP = 24f
+    /** Reachable band below the Android status bar so system shade never steals top-edge pulls on real phones. */
+    const val TOP_REACH_DP = 72f
     const val DISTANCE_DP = 48f
     const val FLICK_DISTANCE_DP = 16f
     const val FLICK_SPEED_DP = 1000f
@@ -191,6 +195,7 @@ private val realDp get() = android.content.res.Resources.getSystem().displayMetr
  * The one gesture recognizer at the root of Honeycomb. Claims a swipe only when the table gives it an intent in the
  * current [space], so vertical scrolling in Apps never collides with navigation.
  */
+@OptIn(ExperimentalLayoutApi::class)
 fun Modifier.spaceInput(
     space: () -> Space,
     onInput: (Input) -> Unit,
@@ -203,6 +208,7 @@ fun Modifier.spaceInput(
     val release by rememberUpdatedState(onRelease)
     val systemBand by rememberUpdatedState(WindowInsets.systemGestures.getBottom(LocalDensity.current))
     val density = LocalDensity.current
+    val statusTop by rememberUpdatedState(WindowInsets.statusBarsIgnoringVisibility.getTop(density))
     val layoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current
     val leftBand by rememberUpdatedState(WindowInsets.systemGestures.getLeft(density, layoutDirection))
     val rightBand by rememberUpdatedState(WindowInsets.systemGestures.getRight(density, layoutDirection))
@@ -212,7 +218,8 @@ fun Modifier.spaceInput(
             if (DragOwners.activeDrag || DragOwners.editingLock) return@awaitEachGesture
             if (down.position.y >= size.height - systemBand) return@awaitEachGesture
             val s = read()
-            val top = EdgeSwipe.nearTop(down.position.y, EdgeSwipe.EDGE_DP * realDp)
+            val topEdgePx = maxOf(EdgeSwipe.EDGE_DP * realDp, statusTop + EdgeSwipe.TOP_REACH_DP * realDp)
+            val top = EdgeSwipe.nearTop(down.position.y, topEdgePx)
             val armed = candidates(s, top, down.position, size).let { if (DragOwners.owns(down.position)) it - Input.Up - Input.Down else it }
                 .let { if (down.position.x < leftBand) it - Input.Right else it }
                 .let { if (down.position.x >= size.width - rightBand && !SideSwipe.kept(s, down.position, size)) it - Input.Left else it }

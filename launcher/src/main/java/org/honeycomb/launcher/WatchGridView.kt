@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.flow.Flow
 import org.honeycomb.launcher.design.CapsuleButton
+import org.honeycomb.launcher.design.CircleButton
 import org.honeycomb.launcher.design.Symbols
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyGridState
@@ -240,6 +241,9 @@ fun WatchGrid(
     keys: List<String> = emptyList(),
     /** The List View button at the grid's end. */
     onListView: () -> Unit = {},
+    /** Optional quick shortcuts beside List View so Block & Settings are always 1 tap away. */
+    onOpenBlock: (() -> Unit)? = null,
+    onOpenSettings: (() -> Unit)? = null,
     /** Top content padding (overridden when a persistent search bar sits above the grid). */
     topPadding: Dp = scrollTopInset + 14.dp,
     /** Long-press without dragging opens the Quick Actions sheet ("Move to top", "Rearrange grid", ...). */
@@ -483,11 +487,30 @@ fun WatchGrid(
                 }
                 if (!editing && !anyDragging) {
                     item(key = "list-view", span = { GridItemSpan(maxLineSpan) }) {
-                        Box(
+                        androidx.compose.foundation.layout.Row(
                             Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 8.dp),
-                            contentAlignment = Alignment.Center,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             ViewSwitchButton(showingGrid = true, onSwitch = onListView)
+                            if (onOpenBlock != null) {
+                                CapsuleButton(
+                                    text = "Block",
+                                    onClick = onOpenBlock,
+                                    modifier = Modifier.testTag("apps-block"),
+                                    icon = Symbols.block,
+                                    height = 40.dp,
+                                )
+                            }
+                            if (onOpenSettings != null) {
+                                CircleButton(
+                                    icon = Symbols.settings,
+                                    contentDescription = "Honeycomb settings",
+                                    onClick = onOpenSettings,
+                                    modifier = Modifier.testTag("apps-settings"),
+                                    size = 40.dp,
+                                )
+                            }
                         }
                     }
                 }

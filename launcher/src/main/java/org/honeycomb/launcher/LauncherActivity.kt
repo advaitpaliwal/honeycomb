@@ -323,6 +323,19 @@ class LauncherActivity : ComponentActivity() {
                                         onRecommend = ::recommend,
                                         onListView = { editing = false; view(false) },
                                         onOpen = ::open,
+                                        onOpenBlock = {
+                                            startActivity(
+                                                android.content.Intent(this@LauncherActivity, FeedsActivity::class.java)
+                                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                            )
+                                        },
+                                        onOpenControl = { input(Input.TopRight) },
+                                        onOpenSettings = {
+                                            startActivity(
+                                                android.content.Intent(this@LauncherActivity, HoneycombSettingsActivity::class.java)
+                                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                            )
+                                        },
                                         searchFocusKey = searchFocusKey,
                                         onSearchFocused = { searchFocusKey = 0 },
                                     ) else AppListScreen(
@@ -341,6 +354,19 @@ class LauncherActivity : ComponentActivity() {
                                         },
                                         onOpen = ::open,
                                         onGridView = { view(true) },
+                                        onOpenBlock = {
+                                            startActivity(
+                                                android.content.Intent(this@LauncherActivity, FeedsActivity::class.java)
+                                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                            )
+                                        },
+                                        onOpenControl = { input(Input.TopRight) },
+                                        onOpenSettings = {
+                                            startActivity(
+                                                android.content.Intent(this@LauncherActivity, HoneycombSettingsActivity::class.java)
+                                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                            )
+                                        },
                                         retainScroll = { launched != null },
                                         searchFocusKey = searchFocusKey,
                                         onSearchFocused = { searchFocusKey = 0 },

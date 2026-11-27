@@ -58,6 +58,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -337,6 +339,11 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
     var nudge by remember { mutableIntStateOf(0) } // re-read right after a tap
     val now = rememberToggles(nudge)
     val scroll = rememberScrollState()
+    val ctx = LocalContext.current
+    var brightness by remember { mutableStateOf(Levels.brightness(ctx)) }
+    val resumes by FaceTick.resumes.collectAsState()
+    LaunchedEffect(resumes) { brightness = Levels.brightness(ctx) }
+    DisposableEffect(Unit) { onDispose { DragOwners.set("brightness-slider", null) } }
     fun act(f: () -> Unit): () -> Unit = { f(); nudge++ }
     HoneycombTheme { Backdrop(Modifier.testTag("control-centre"), sheet = true, ground = HoneycombColors.sheet) {
         // a swipe up closes it once the list is at its end (the Space's table: sheetEnd)
@@ -344,26 +351,19 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
         // ControlGrid's numbers are watch points
         Box(Modifier.fillMaxSize()) {
             val pt = 1.wp
+            val gridWidth = pt * (ControlGrid.BUTTON_W * ControlGrid.COLS + ControlGrid.GAP_X)
+            val updateState by AppUpdater.state.collectAsState()
+            val availableUpdate = when (val s = updateState) {
+                is UpdateState.Available -> s.release
+                is UpdateState.ReadyToInstall -> s.release
+                else -> null
+            }
             Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(top = statusBarInset, bottom = scrollBottomInset), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.height(pt * ControlGrid.CAPSULE_TOP))
                 BatteryCapsule(now, pt)
                 Spacer(Modifier.height(pt * ControlGrid.CAPSULE_GAP))
-                ControlGrid.cells.groupBy { it.row }.toSortedMap().values.forEachIndexed { i, row ->
-                    if (i > 0) Spacer(Modifier.height(pt * ControlGrid.GAP_Y))
-                    Row(horizontalArrangement = Arrangement.spacedBy(pt * ControlGrid.GAP_X)) {
-                        row.sortedBy { it.col }.forEach { c ->
-                            Control(c.id, now, Modifier.size(pt * ControlGrid.BUTTON_W, pt * ControlGrid.BUTTON_H), pt, onHoldQuiet, ::act)
-                        }
-                    }
-                }
-                val ctx = LocalContext.current
-                val updateState by AppUpdater.state.collectAsState()
-                val availableUpdate = when (val s = updateState) {
-                    is UpdateState.Available -> s.release
-                    is UpdateState.ReadyToInstall -> s.release
-                    else -> null
-                }
-                Spacer(Modifier.height(pt * ControlGrid.GAP_Y))
+
+                // Quick actions right at the top: Block + Settings / Update (never buried below the fold)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -403,6 +403,54 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                             icon = Symbols.settings,
                             height = 40.dp,
                         )
+                    }
+                }
+
+                Spacer(Modifier.height(pt * ControlGrid.GAP_Y * 2))
+
+                // Native Material 3 Brightness slider right at the top of Control Centre
+                Platter(
+                    modifier = Modifier
+                        .size(width = gridWidth, height = 56.dp)
+                        .onGloballyPositioned { c -> DragOwners.set("brightness-slider", c.boundsInRoot()) }
+                        .testTag("brightness-slider"),
+                    padding = 12.dp,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Glyph(Symbols.sun, HoneycombColors.label, 20.dp)
+                        NativeSlider(
+                            value = brightness,
+                            onValueChange = { next ->
+                                brightness = next
+                                if (Levels.canWriteBrightness(ctx)) {
+                                    Levels.setBrightness(ctx, next)
+                                } else {
+                                    Device.launch(
+                                        ctx,
+                                        Intent(
+                                            Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                            android.net.Uri.fromParts("package", ctx.packageName, null),
+                                        ),
+                                    )
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(pt * ControlGrid.GAP_Y * 2))
+
+                ControlGrid.cells.groupBy { it.row }.toSortedMap().values.forEachIndexed { i, row ->
+                    if (i > 0) Spacer(Modifier.height(pt * ControlGrid.GAP_Y))
+                    Row(horizontalArrangement = Arrangement.spacedBy(pt * ControlGrid.GAP_X)) {
+                        row.sortedBy { it.col }.forEach { c ->
+                            Control(c.id, now, Modifier.size(pt * ControlGrid.BUTTON_W, pt * ControlGrid.BUTTON_H), pt, onHoldQuiet, ::act)
+                        }
                     }
                 }
                 Spacer(Modifier.height(pt * ControlGrid.CAPSULE_TOP))

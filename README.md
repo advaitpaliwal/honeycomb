@@ -50,15 +50,17 @@ When I started paying attention to my Apple Watch, I noticed how intentionally m
 | Swipe left or tap **All Apps** | Every app in a honeycomb grid or A–Z list view with scrubber & search |
 | Swipe up on the face | The Smart Stack: live timers, now playing, and your Android widgets |
 | Touch and hold the face | Pick a different face, or edit one |
-| Swipe down from the top | Your notifications (from the right side, Control Centre & **Block**) |
+| Swipe down from the top-right (just below the status bar) | Control Centre: Brightness slider, **Block**, Settings, and quick toggles |
+| Swipe down from the top-left | Notification Centre |
 | Swipe up from the bottom line | Back to the face from anywhere. On the face itself, your apps |
 | Swipe right or Back | Up one level |
+| Search `"block"`, `"brightness"`, or `"settings"` | Jump straight to Block, Control Centre, or Honeycomb Settings |
 
 There are six faces to pick from: Stacked, Info, Split, Hour, Classic and Plain. Colours, text size and dark mode follow your phone's own settings.
 
 ### Built-in Block (Feeds & Websites, 100% on-device)
 
-Honeycomb includes an optional **Block** screen (accessible from Control Centre, Honeycomb settings, or the **Block** Quick Settings tile):
+Honeycomb includes an optional **Block** screen (1 tap from All Apps, Control Centre, Search, or the **Block** Quick Settings tile):
 - **Short-form feeds & addictive tabs:** Block Instagram Reels/Explore, YouTube Shorts, Snapchat Spotlight, TikTok, and more — or add a pause/limit before opening distracting apps.
 - **Zero-VPN website blocking:** Block distracting domains or toggle built-in categories (Social, News, Video, Shopping, Adult) with per-site controls and custom domains — all locally on-device with no VPN and no external server.
 - **Strict mode:** Optional 24-hour cooldown before a block rule can be loosened or turned off.
@@ -87,51 +89,41 @@ If you prefer managing sideloaded apps with [Obtainium](https://github.com/Imran
 
 No root, no bootloader unlock and no account. Honeycomb only uses Android's normal home app role.
 
-## Privacy
+## Privacy & Permissions
 
-Honeycomb has **no accounts, no analytics, no telemetry, and no ads**, and opts out of Android's cloud backup (`android:allowBackup="false"`). The only network requests Honeycomb ever makes are read-only HTTPS requests to `api.github.com` / `github.com` to check for and download signed Honeycomb updates (verified against the release's `.sha256` checksum and signing certificate).
+Honeycomb is open source under Apache 2.0 with **no accounts, no tracking, and no ads**. It only goes online to check GitHub Releases for app updates, and normal Android backup keeps your watch face, layout, and Block rules if you switch phones. Every permission below is optional except the home app role.
 
 | Permission | Why |
 | --- | --- |
 | Home app role | To be your home screen |
 | See all apps (`QUERY_ALL_PACKAGES`) | To list every app you can open |
-| Internet (`INTERNET`) | Strictly to check for and download signed APK updates from GitHub Releases (`AppUpdater.kt`) |
-| Install packages (`REQUEST_INSTALL_PACKAGES`, optional) | To launch Android's package installer when you tap an in-app update |
-| Usage access (optional) | To rank your 7 most used apps. Without it, Honeycomb counts launches locally |
-| Notification access (optional) | For Notification Centre, Now Playing and live timers in the Smart Stack |
-| Do Not Disturb access (optional) | For the Quiet button in Control Centre (media audio stays unmuted) |
-| Wi‑Fi state | To show whether Wi‑Fi is on in Control Centre |
-| Modify system settings (optional) | For the brightness slider in Control Centre |
-| Accessibility, "Honeycomb Block" (optional, off until you turn it on) | To block short-form feeds, pause distracting apps, and block websites in your browser locally on-device |
+| Internet (`INTERNET`) | To check for and download updates from GitHub Releases |
+| Install packages (optional) | To install an update when you tap it |
+| Usage access (optional) | To rank your 7 most used apps (otherwise Honeycomb counts launches locally) |
+| Notification access (optional) | For Notification Centre, Now Playing, and live timers in the Smart Stack |
+| Do Not Disturb access (optional) | For the Quiet toggle in Control Centre |
+| Modify system settings (optional) | For the Brightness slider in Control Centre |
+| Accessibility, "Honeycomb Block" (optional, off by default) | To block short-form feeds (Reels, Shorts) and websites locally on-device |
 
 ## FAQ
 
-**Why should I trust an APK that asks for Accessibility or Notification access?**
-You don't have to take anyone's word for it:
-1. Honeycomb's only network code is the ~250-line open-source [`AppUpdater.kt`](launcher/src/main/java/org/honeycomb/launcher/AppUpdater.kt), which is locked to GitHub Releases HTTPS hosts (`api.github.com`, `github.com`, `*.githubusercontent.com`) and verifies every downloaded APK against its SHA-256 checksum. Zero user data is ever uploaded anywhere.
-2. Every sensitive permission (Usage, Notifications, DND, Write Settings, Accessibility, Install Packages) is **100% optional** and skippable — the launcher works fine without them.
-3. The entire codebase is open source under Apache 2.0, and release APKs are built transparently by [GitHub Actions](.github/workflows/release-app.yml) with SHA-256 checksums published alongside every release.
-
 **Why Android 14+ only?**
-Honeycomb uses modern Android 14–16 launcher, widget, and Live Update APIs and targets edge-to-edge Material 3 Expressive styling without legacy compatibility shims. If you're on Android 13 or older, the APK will not install.
+Honeycomb uses modern Android 14–16 launcher, widget, and Live Update APIs without legacy shims.
 
 **Does Block need a VPN or root?**
-No. **Honeycomb Block** runs locally using Android's Accessibility service (when you opt in), so it blocks short-form feeds inside apps (like Reels and Shorts) and blocked websites in your browser without hijacking your VPN slot or routing traffic anywhere.
-
-**What happens to my existing apps, banking apps, and widgets?**
-Nothing changes underneath. Honeycomb is just a standard Android home app (`ROLE_HOME`). Your apps, banking/Play Integrity checks, notifications, and Android home screen widgets (added via the Smart Stack's **Edit** button) all work normally.
+No. **Honeycomb Block** runs locally using Android's Accessibility service when you turn it on, so your VPN slot stays free.
 
 **Why is "Allow restricted settings" needed for Notifications or Block?**
-Android 13+ automatically restricts Notification Listener and Accessibility toggles for any sideloaded APK (anything not installed from the Play Store). Tapping **App info › ⋮ › Allow restricted settings** once unlocks those toggles.
+Android 13+ automatically restricts Notification and Accessibility toggles for apps installed outside Google Play. Tapping **App info › ⋮ › Allow restricted settings** once unlocks them.
+
+**What happens to my existing apps, banking apps, and widgets?**
+Nothing changes underneath. Honeycomb is just a normal Android home app — your banking apps, Google Wallet, RCS, and widgets all work normally.
 
 **Will this come to Google Play or F-Droid?**
-Google Play is on the roadmap once the cross-device testing pass is complete. Until then, GitHub Releases (or [Obtainium](https://github.com/ImranR98/Obtainium) for automatic updates) is the official channel.
-
-**Does Honeycomb drain battery or keep anything running in the background?**
-No background services, no analytics, and no wake locks. Watch faces only tick while the screen is on and Honeycomb is visible, and update checks run at most once every 12 hours when you return to the home screen.
+Yes, both are on the roadmap. Until then, GitHub Releases (or [Obtainium](https://github.com/ImranR98/Obtainium)) is the easiest way to install and update.
 
 **How do I switch back to my old home screen?**
-Open **Settings › Apps › Default apps › Home app**, pick your previous launcher (e.g. Pixel Launcher or One UI Home), and uninstall Honeycomb. Nothing is permanently modified.
+Open **Settings › Apps › Default apps › Home app**, pick your previous launcher, and uninstall Honeycomb.
 
 ## Build from source
 
