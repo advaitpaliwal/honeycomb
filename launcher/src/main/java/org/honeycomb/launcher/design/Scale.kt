@@ -123,6 +123,35 @@ object ControlSize {
 }
 
 /**
+ * Unified phone-proportioned button and icon-disc dimensions (Material 3 Expressive capsule scale).
+ * Visual bounds stay crisp while [WatchTouchTargets] expands pointer and accessibility hit-slop automatically.
+ */
+object ButtonSize {
+    /** Inline row, card, and top-bar actions (Get, Show Less, Turn On, header Done). */
+    val compact: Dp = 36.dp
+
+    /** Standalone centered pill actions (Edit, Done, Add, All Apps, List View / Grid View). */
+    val regular: Dp = 42.dp
+
+    /** Full-width primary and secondary page / sheet actions (Setup, Pause, Clear All, Website Add). */
+    val large: Dp = 50.dp
+
+    /** Minimum width for standalone action pills (Edit, Done, Add) so labels never look stubby. */
+    val minPillWidth: Dp = 112.dp
+
+    /** Minimum width for icon+label view-switcher pills (All Apps, List View, Grid View). */
+    val minWidePillWidth: Dp = 136.dp
+
+    /** Standard stacked button gap on full-screen sheets and onboarding pages. */
+    val stackGap: Dp = 10.dp
+
+    /** Circular icon buttons: compact inline, standard toolbar/transport, and prominent play/action. */
+    val circleSmall: Dp = 36.dp
+    val circleRegular: Dp = 40.dp
+    val circleLarge: Dp = 44.dp
+}
+
+/**
  * Material 3 Expressive's corner scale (m3.material.io/styles/shape/corner-radius-scale), in layout units (one is a dp on
  * a 360 dp wide phone). Every corner in Honeycomb is one of these, or a circle.
  */
