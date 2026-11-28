@@ -82,10 +82,30 @@ sealed interface StackItem {
     data object Edit : StackItem
 }
 
-/** Live Updates first, now playing second, then the widgets in their saved order; Edit always closes the stack. */
+/** Live Updates first, now playing second, then the widgets in their order; Edit always closes the stack. */
 fun stackItems(live: List<String>, playing: Boolean, widgets: List<Int>): List<StackItem> =
     live.map { StackItem.Live(it) } + listOfNotNull(StackItem.Playing.takeIf { playing }) +
         widgets.map { StackItem.Widget(it) } + StackItem.Edit
+
+/**
+ * Reorders user-added Smart Stack widgets dynamically using the live [ContextualRanking] (place dwell,
+ * time-of-day, brightness, headphones, charging, notifications, Markov sequences, and online feedback).
+ * Widgets with no contextual signal keep their saved manual order cleanly.
+ */
+fun rankStackWidgets(
+    widgetIds: List<Int>,
+    providerPkg: (Int) -> String?,
+    ranking: ContextualRanking,
+): List<Int> {
+    if (widgetIds.size <= 1 || ranking.scores.isEmpty()) return widgetIds
+    return widgetIds.withIndex()
+        .sortedWith(
+            compareByDescending<IndexedValue<Int>> { (_, id) ->
+                providerPkg(id)?.let { ranking.scores[it] } ?: 0.0
+            }.thenBy { it.index },
+        )
+        .map { it.value }
+}
 
 
 /** A Live Update's and Now Playing's card height in wp (160 dp at 349 dp wide), and the gap between cards. */
@@ -139,7 +159,11 @@ fun widgetsBeforePile(h: List<Float>, room: Float): Int {
 }
 
 @Composable
-fun SmartStack(onTop: (Boolean) -> Unit, onOpenMedia: (String) -> Unit) {
+fun SmartStack(
+    onTop: (Boolean) -> Unit,
+    onOpenMedia: (String) -> Unit,
+    ranking: ContextualRanking = ContextualRanking(emptyList(), emptyMap()),
+) {
     val ctx = LocalContext.current
     var ms by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { ms = System.currentTimeMillis(); kotlinx.coroutines.delay(1000 - ms % 1000) } }
@@ -150,6 +174,9 @@ fun SmartStack(onTop: (Boolean) -> Unit, onOpenMedia: (String) -> Unit) {
     val changes by Widgets.changes.collectAsState()
     val mgr = remember { AppWidgetManager.getInstance(ctx) }
     val widgets = remember(changes) { Widgets.ids(ctx).filter { mgr.getAppWidgetInfo(it) != null } }
+    val rankedWidgets = remember(widgets, ranking) {
+        rankStackWidgets(widgets, { id -> mgr.getAppWidgetInfo(id)?.provider?.packageName }, ranking)
+    }
     // Avoid duplicating a music player when the user already pinned a widget for the active media app (e.g. Apple Music / Spotify).
     val widgetPackages = remember(widgets) { widgets.mapNotNull { mgr.getAppWidgetInfo(it)?.provider?.packageName }.toSet() }
     val showNowPlaying = media?.let { it.pkg !in widgetPackages } ?: false
@@ -158,7 +185,7 @@ fun SmartStack(onTop: (Boolean) -> Unit, onOpenMedia: (String) -> Unit) {
     // stacks seeded before wl-live-stack still hold the phone's Calendar and Clock widgets; take those out once
     LaunchedEffect(Unit) { Widgets.dropSeeded(ctx) }
     var editing by remember { mutableStateOf(false) }
-    val items = stackItems(live.map { it.key }, showNowPlaying, widgets)
+    val items = stackItems(live.map { it.key }, showNowPlaying, rankedWidgets)
     HoneycombTheme { Backdrop(Modifier.testTag("smart-stack")) {
         // Subtle blurred live watch face behind the Smart Stack, matching watchOS
         BlurredFace(opacity = 0.30f)

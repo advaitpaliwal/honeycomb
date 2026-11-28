@@ -243,4 +243,47 @@ class ContextualRankTest {
     @Test fun learnedNotificationUtilityDownranksRepeatedlyDismissedSpam() {
         assertTrue(notifUtility(opened = 10, dismissed = 1) > notifUtility(opened = 0, dismissed = 12) * 2.5)
     }
+
+    @Test fun unsupervisedWifiDwellInfersHomeWorkRegularAndTransientPlaces() {
+        val profiles = mapOf(
+            "w_apt" to NetworkDwellProfile(totalMin = 900.0, nightMin = 480.0, workDayMin = 60.0, chargingMin = 360.0, visits = 6),
+            "w_office" to NetworkDwellProfile(totalMin = 600.0, nightMin = 0.0, workDayMin = 540.0, chargingMin = 90.0, visits = 5),
+            "w_cafe" to NetworkDwellProfile(totalMin = 180.0, nightMin = 0.0, workDayMin = 40.0, chargingMin = 0.0, visits = 3),
+            "w_airport" to NetworkDwellProfile(totalMin = 25.0, nightMin = 0.0, workDayMin = 0.0, chargingMin = 0.0, visits = 1),
+        )
+        assertEquals("home", inferPlaceRole("w_apt", onWifi = true, profiles))
+        assertEquals("work", inferPlaceRole("w_office", onWifi = true, profiles))
+        assertEquals("regular", inferPlaceRole("w_cafe", onWifi = true, profiles))
+        assertEquals("transient", inferPlaceRole("w_airport", onWifi = true, profiles))
+        assertEquals("away", inferPlaceRole("cell", onWifi = false, profiles))
+    }
+
+    @Test fun smartStackReordersUserWidgetsByLiveContextWhilePreservingUnscoredOrder() {
+        val pkgs = mapOf(
+            10 to "com.google.android.calendar",
+            20 to "com.amazon.kindle",
+            30 to "com.weather.app",
+            40 to "com.notes.app",
+        )
+        val morningWork = ContextualRanking(
+            ordered = listOf("com.google.android.calendar", "com.amazon.kindle"),
+            scores = mapOf("com.google.android.calendar" to 9.5, "com.amazon.kindle" to 1.2),
+        )
+        val nightHome = ContextualRanking(
+            ordered = listOf("com.amazon.kindle", "com.google.android.calendar"),
+            scores = mapOf("com.amazon.kindle" to 10.4, "com.google.android.calendar" to 0.8),
+        )
+        // Saved order: 30 (weather), 20 (kindle), 10 (calendar), 40 (notes)
+        val saved = listOf(30, 20, 10, 40)
+        assertEquals(
+            "At work in the morning, Calendar surfaces to #1 while unscored Weather stays ahead of unscored Notes",
+            listOf(10, 20, 30, 40),
+            rankStackWidgets(saved, { pkgs[it] }, morningWork),
+        )
+        assertEquals(
+            "At home at night, Kindle surfaces to #1 while unscored widgets preserve their saved relative order",
+            listOf(20, 10, 30, 40),
+            rankStackWidgets(saved, { pkgs[it] }, nightHome),
+        )
+    }
 }

@@ -180,6 +180,25 @@ object Quiet {
         }
     }
 
+    /**
+     * One-time calm default: silences notification sound (STREAM_NOTIFICATION = 0, leaving calls, alarms,
+     * media, and Live Updates untouched) and turns off the notification pulse light when WRITE_SETTINGS is granted.
+     */
+    fun silenceNotificationBeepsOnce(ctx: Context) {
+        val p = prefs(ctx)
+        if (p.getBoolean("migrated_silent_notifs_v1", false)) return
+        p.edit().putBoolean("migrated_silent_notifs_v1", true).apply()
+        runCatching {
+            val am = ctx.getSystemService(android.media.AudioManager::class.java)
+            am?.setStreamVolume(android.media.AudioManager.STREAM_NOTIFICATION, 0, 0)
+        }
+        runCatching {
+            if (android.provider.Settings.System.canWrite(ctx)) {
+                android.provider.Settings.System.putInt(ctx.contentResolver, "notification_light_pulse", 0)
+            }
+        }
+    }
+
     /** Keeps Android's active DND policy synced (media unmuted + repeat callers + chosen call mode) across upgrades. */
     fun ensureMediaAllowed(ctx: Context) {
         if (!granted(ctx) || !isOn(ctx)) return

@@ -32,6 +32,7 @@ private const val CONTEXT_PREFS = "launch_context"
 private const val KEY_HISTORY = "history_v1"
 private const val KEY_LAST_NET_ID = "last_net_id_v2"
 private const val KEY_LAST_NET_CHANGE_MS = "last_net_change_ms_v2"
+private const val KEY_LAST_NET_SAMPLE_MS = "last_net_sample_ms_v2"
 private const val KEY_LAST_LAUNCH_MS = "last_launch_ms_v2"
 private const val MAX_LOCAL_HISTORY = 320
 private const val MAX_ONLINE_WEIGHTS = 700
@@ -73,10 +74,58 @@ data class LaunchEvent(
 )
 
 /**
+ * Accumulated passive dwell profile for a single Wi-Fi network fingerprint (zero GPS, zero SSID/Location needed).
+ * Used to infer semantic place roles (home vs work vs frequent third-place vs transient visit) purely from dwell timing.
+ */
+data class NetworkDwellProfile(
+    val totalMin: Double = 0.0,
+    val nightMin: Double = 0.0,      // 23:00 - 07:00 dwell minutes (strong Home signature)
+    val workDayMin: Double = 0.0,    // Mon-Fri 09:00 - 18:00 dwell minutes (strong Work/Office signature)
+    val chargingMin: Double = 0.0,   // Charging dwell minutes (reinforces Home / desk)
+    val visits: Int = 0,
+)
+
+/**
+ * Unsupervised semantic place classifier from pure Wi-Fi dwell patterns (zero GPS, zero hardcoding):
+ *   - "home":      Wi-Fi with the highest overnight + charging dwell (>= 60 weighted night/charging min)
+ *   - "work":      Non-home Wi-Fi with the highest weekday daytime dwell (>= 90 weekday min)
+ *   - "regular":   Any other Wi-Fi with >= 120 total min across >= 2 visits (gym, partner's house, favorite cafe)
+ *   - "transient": Brief/new Wi-Fi (restaurant, airport, hotel, friend's house)
+ *   - "away":      Cellular / off-Wi-Fi
+ */
+internal fun inferPlaceRole(
+    currentNetId: String,
+    onWifi: Boolean,
+    profiles: Map<String, NetworkDwellProfile>,
+): String {
+    if (!onWifi || currentNetId == "cell" || currentNetId == "offline" || currentNetId == "other") return "away"
+    val wifiProfiles = profiles.filterKeys { it.startsWith("w") }
+    if (wifiProfiles.isEmpty()) return "transient"
+
+    val homeId = wifiProfiles.entries
+        .map { (id, p) -> id to (p.nightMin * 1.5 + p.chargingMin * 0.8 + p.totalMin * 0.15) }
+        .filter { it.second >= 60.0 }
+        .maxByOrNull { it.second }
+        ?.first
+    if (currentNetId == homeId) return "home"
+
+    val workId = wifiProfiles.entries
+        .filter { it.key != homeId && it.value.workDayMin >= 90.0 }
+        .maxByOrNull { it.value.workDayMin }
+        ?.key
+    if (currentNetId == workId) return "work"
+
+    val cur = wifiProfiles[currentNetId]
+    if (cur != null && cur.totalMin >= 120.0 && cur.visits >= 2) return "regular"
+    return "transient"
+}
+
+/**
  * Rich, zero-GPS, zero-hardcoding snapshot of the exact moment the user is in:
- * network identity (Home Wi-Fi vs Work Wi-Fi vs Cellular via LinkProperties hash), network transition timestamp,
- * headphones/car audio, media playback, volume level, ringer mode, screen brightness (dark room vs daylight),
- * dark mode, charging & battery level, power-save mode, and pocket/idle gap since last launch.
+ * network identity & unsupervised semantic place role (home / work / regular / transient / away),
+ * continuous stay duration at this place, network transition timestamp, headphones/car audio, media playback,
+ * volume level, ringer mode, screen brightness (dark room vs daylight), dark mode, charging & battery level,
+ * power-save mode, and pocket/idle gap since last launch.
  */
 data class DeviceContext(
     val onWifi: Boolean = false,
@@ -84,6 +133,8 @@ data class DeviceContext(
     val charging: Boolean = false,
     val networkId: String = if (onWifi) "wifi" else "cell",
     val networkChangedAtMs: Long = 0L,
+    val placeRole: String = if (onWifi) "wifi" else "away",   // home, work, regular, transient, away
+    val stayDurationMin: Long = 30L,                          // continuous minutes spent on current network
     val batteryBucket: Int = 1,          // 0=low(<20%), 1=mid, 2=high(>=85%)
     val brightnessBucket: Int = 1,       // 0=dim/dark-room(<18%), 1=indoors, 2=bright/outdoors(>=72%)
     val volumeBucket: Int = 1,           // 0=muted, 1=quiet, 2=mid, 3=loud
@@ -96,11 +147,19 @@ data class DeviceContext(
 ) {
     /**
      * Dynamic sparse feature tokens representing this exact moment (zero hardcoded app names).
-     * Combines device environment, network identity, and temporal/calendar cycles + key feature crosses.
+     * Combines semantic place role, stay duration, device environment, and temporal/calendar cycles + crosses.
      */
     fun activeBuckets(nowMs: Long = 0L, zoneId: ZoneId = ZoneId.systemDefault()): List<String> = buildList {
         val netBase = if (onWifi) "net_wifi" else "net_away"
         add(netBase)
+        add("place_$placeRole")
+        val stayBand = when {
+            stayDurationMin < 10L -> "arrived"
+            stayDurationMin < 60L -> "settled"
+            else -> "deep"
+        }
+        add("stay_$stayBand")
+        add("x_place_${placeRole}_$stayBand")
         if (networkId.isNotEmpty() && networkId != "wifi" && networkId != "cell") {
             add("netid_$networkId")
         }
@@ -136,7 +195,7 @@ data class DeviceContext(
             add("dow_$dow")
             add(if (weekend) "cal_wknd" else "cal_wkdy")
             add("dom_$domBand")
-            // Network × time-of-day cross (learns "Home Wi-Fi at 11pm" vs "Home Wi-Fi at 8am" vs "Away at 11pm")
+            // Place × time-of-day cross (learns "Home late night" vs "Home morning" vs "Work daytime" vs "Away late")
             val partOfDay = when (z.hour) {
                 in 5..10 -> "morn"
                 in 11..16 -> "day"
@@ -144,6 +203,7 @@ data class DeviceContext(
                 else -> "late"
             }
             add("x_${netBase}_$partOfDay")
+            add("x_place_${placeRole}_$partOfDay")
             if (networkId.isNotEmpty() && networkId != "wifi" && networkId != "cell") {
                 add("x_netid_${networkId}_$partOfDay")
             }
@@ -501,15 +561,75 @@ fun readDeviceContext(ctx: Context): DeviceContext {
         }
     }
 
-    // Track network context transitions (e.g. cellular -> Home Wi-Fi) so stale pre-arrival bursts flush immediately
+    // Track network context transitions AND accumulate per-Wi-Fi dwell time (night / weekday / charging / visits)
+    // so Honeycomb infers Home Wi-Fi vs Work Wi-Fi vs Regular vs Transient purely from dwell duration!
     val prevNetId = cPrefs.getString(KEY_LAST_NET_ID, null)
     var netChangedAt = cPrefs.getLong(KEY_LAST_NET_CHANGE_MS, 0L)
+    val lastSampleMs = cPrefs.getLong(KEY_LAST_NET_SAMPLE_MS, 0L)
+    val profiles = readNetworkProfiles(ctx).toMutableMap()
+
+    // Read charging early so overnight/charging dwell is credited accurately
+    var charging = false
+    var batteryBucket = 1
+    runCatching {
+        val intent = ctx.registerReceiver(null, IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100)?.coerceAtLeast(1) ?: 100
+        if (level >= 0) {
+            val pct = (level * 100) / scale
+            batteryBucket = when {
+                pct < 20 -> 0
+                pct >= 85 -> 2
+                else -> 1
+            }
+        }
+    }
+
+    val netEditor = cPrefs.edit()
     if (prevNetId == null) {
-        cPrefs.edit().putString(KEY_LAST_NET_ID, netId).apply()
+        netChangedAt = now
+        netEditor.putString(KEY_LAST_NET_ID, netId).putLong(KEY_LAST_NET_CHANGE_MS, now).putLong(KEY_LAST_NET_SAMPLE_MS, now)
+        if (netId.startsWith("w")) {
+            val p = profiles[netId] ?: NetworkDwellProfile()
+            val updated = p.copy(visits = p.visits + 1)
+            profiles[netId] = updated
+            writeNetworkProfile(netEditor, netId, updated)
+        }
     } else if (prevNetId != netId && netId != "offline" && prevNetId != "offline") {
         netChangedAt = now
-        cPrefs.edit().putString(KEY_LAST_NET_ID, netId).putLong(KEY_LAST_NET_CHANGE_MS, now).apply()
+        netEditor.putString(KEY_LAST_NET_ID, netId).putLong(KEY_LAST_NET_CHANGE_MS, now).putLong(KEY_LAST_NET_SAMPLE_MS, now)
+        if (netId.startsWith("w")) {
+            val p = profiles[netId] ?: NetworkDwellProfile()
+            val updated = p.copy(visits = p.visits + 1)
+            profiles[netId] = updated
+            writeNetworkProfile(netEditor, netId, updated)
+        }
+    } else if (netId == prevNetId && netId.startsWith("w") && lastSampleMs in 1L..now) {
+        // Credit elapsed dwell minutes (capped at 120 min per wake gap so long sleep still credits realistic overnight stay)
+        val deltaMin = ((now - lastSampleMs).coerceIn(0L, 120 * 60_000L)) / 60_000.0
+        if (deltaMin >= 0.25) {
+            val z = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault())
+            val isNight = z.hour >= 23 || z.hour < 7
+            val isWorkDay = z.dayOfWeek.value in 1..5 && z.hour in 9..17
+            val p = profiles[netId] ?: NetworkDwellProfile(visits = 1)
+            val updated = p.copy(
+                totalMin = (p.totalMin + deltaMin).coerceAtMost(50_000.0),
+                nightMin = (p.nightMin + if (isNight) deltaMin else 0.0).coerceAtMost(25_000.0),
+                workDayMin = (p.workDayMin + if (isWorkDay) deltaMin else 0.0).coerceAtMost(25_000.0),
+                chargingMin = (p.chargingMin + if (charging) deltaMin else 0.0).coerceAtMost(25_000.0),
+                visits = p.visits.coerceAtLeast(1),
+            )
+            profiles[netId] = updated
+            writeNetworkProfile(netEditor, netId, updated)
+            netEditor.putLong(KEY_LAST_NET_SAMPLE_MS, now)
+        }
     }
+    netEditor.apply()
+
+    val placeRole = inferPlaceRole(netId, onWifi, profiles)
+    val stayDurationMin = if (netChangedAt in 1L..now) (now - netChangedAt) / 60_000L else 30L
 
     var headphones = false
     var carAudio = false
@@ -549,24 +669,6 @@ fun readDeviceContext(ctx: Context): DeviceContext {
         carAudio = (uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_CAR
     }
 
-    var charging = false
-    var batteryBucket = 1
-    runCatching {
-        val intent = ctx.registerReceiver(null, IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-        val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100)?.coerceAtLeast(1) ?: 100
-        if (level >= 0) {
-            val pct = (level * 100) / scale
-            batteryBucket = when {
-                pct < 20 -> 0
-                pct >= 85 -> 2
-                else -> 1
-            }
-        }
-    }
-
     val powerSave = runCatching { ctx.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true }.getOrDefault(false)
     val darkMode = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     val brightnessBucket = runCatching {
@@ -593,6 +695,8 @@ fun readDeviceContext(ctx: Context): DeviceContext {
         charging = charging,
         networkId = netId,
         networkChangedAtMs = netChangedAt,
+        placeRole = placeRole,
+        stayDurationMin = stayDurationMin,
         batteryBucket = batteryBucket,
         brightnessBucket = brightnessBucket,
         volumeBucket = volumeBucket,
@@ -780,6 +884,28 @@ private fun readOnlineWeights(ctx: Context): Map<String, Map<String, Double>> {
         out.getOrPut(pkg) { HashMap() }[feat] = w
     }
     return out
+}
+
+private fun readNetworkProfiles(ctx: Context): Map<String, NetworkDwellProfile> {
+    val all = ctx.getSharedPreferences(CONTEXT_PREFS, Context.MODE_PRIVATE).all
+    val out = HashMap<String, NetworkDwellProfile>()
+    for ((k, v) in all) {
+        if (!k.startsWith("np:")) continue
+        val raw = v as? String ?: continue
+        val parts = raw.split(',')
+        if (parts.size < 5) continue
+        val total = parts[0].toDoubleOrNull() ?: continue
+        val night = parts[1].toDoubleOrNull() ?: continue
+        val work = parts[2].toDoubleOrNull() ?: continue
+        val chg = parts[3].toDoubleOrNull() ?: continue
+        val visits = parts[4].toIntOrNull() ?: 1
+        out[k.substring(3)] = NetworkDwellProfile(total, night, work, chg, visits)
+    }
+    return out
+}
+
+private fun writeNetworkProfile(editor: android.content.SharedPreferences.Editor, netId: String, p: NetworkDwellProfile) {
+    editor.putString("np:$netId", "${p.totalMin},${p.nightMin},${p.workDayMin},${p.chargingMin},${p.visits}")
 }
 
 private fun readFatigue(ctx: Context): Map<String, FatigueState> {

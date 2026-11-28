@@ -161,8 +161,8 @@ class LauncherActivity : ComponentActivity() {
                     var ranking by remember { mutableStateOf(ContextualRanking(emptyList(), emptyMap())) }
                     val resumeTick = FaceTick.resumes.value
                     val notifTick by MediaListener.Defaults.posted.collectAsState()
-                    LaunchedEffect(space.depth, resumeTick, notifTick) {
-                        if (space.depth == Depth.Favourites || space.depth == Depth.Face || ranking.ordered.isEmpty()) {
+                    LaunchedEffect(space.depth, space.stack, resumeTick, notifTick) {
+                        if (space.depth == Depth.Favourites || space.depth == Depth.Face || space.stack || ranking.ordered.isEmpty()) {
                             ranking = withContext(Dispatchers.IO) { contextualPackages(this@LauncherActivity) }
                         }
                     }
@@ -311,6 +311,7 @@ class LauncherActivity : ComponentActivity() {
                                         SmartStack(
                                             onTop = { top -> if (space.stackTop != top) space = space.copy(stackTop = top) },
                                             onOpenMedia = { m -> openMedia(this@LauncherActivity, m) },
+                                            ranking = ranking,
                                         )
                                     },
                                 )
@@ -468,6 +469,7 @@ class LauncherActivity : ComponentActivity() {
             homeDepth = AppOrder.savedHomeStart(this).depth
             runCatching { Widgets.host(this).startListening() }
             runCatching { Quiet.clearSetupDndOnce(this) }
+            runCatching { Quiet.silenceNotificationBeepsOnce(this) }
             runCatching { Quiet.ensureMediaAllowed(this) }
             runCatching { AppUpdater.checkIfDue(this) }
         }
