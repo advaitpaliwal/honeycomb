@@ -1,6 +1,10 @@
 package org.honeycomb.launcher
 
+import android.app.AlarmManager
 import android.app.AppOpsManager
+import android.app.Notification
+import android.app.NotificationManager
+import android.app.Person
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.ComponentName
@@ -12,9 +16,12 @@ import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
+import android.os.Build
+import android.os.Parcelable
 import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.ZoneId
@@ -46,10 +53,12 @@ private const val SLOW_HABIT_HALF_LIFE_MS = 72.0 * 3600_000.0      // 72 hr: ste
 private const val MARKOV_CHAIN_GAP_MS = 3.0 * 60_000.0             // 3 min max gap between consecutive apps in a session
 private const val MARKOV_RECENCY_WINDOW_MS = 10.0 * 60_000.0       // last app stays predictive for 10 min
 private const val TOD_SIGMA_HOURS = 1.5                            // smooth circular Gaussian kernel (+/- 1.5 hr)
-private const val NOTIF_HALF_LIFE_MS = 5.0 * 60_000.0              // 5 min exponential decay for unread notifications
-private const val FATIGUE_HALF_LIFE_MS = 25.0 * 60_000.0           // 25 min decay for skipped-impression fatigue
-private const val CONTEXT_SHIFT_WINDOW_MS = 45.0 * 60_000.0        // network switch flushes prior-context bursts for 45 min
-private const val CONTEXT_SHIFT_DISCOUNT = 0.18                    // bursts from before arriving home/leaving drop 82%
+private const val NOTIF_IMPORTANT_HALF_LIFE_MS = 45.0 * 60_000.0     // 45 min: real messages, calls, priority alerts stay urgent
+private const val NOTIF_NORMAL_HALF_LIFE_MS = 18.0 * 60_000.0        // 18 min: standard app alerts
+private const val NOTIF_LOW_HALF_LIFE_MS = 6.0 * 60_000.0            // 6 min: promos / low-priority notifications fade fast
+private const val FATIGUE_HALF_LIFE_MS = 25.0 * 60_000.0             // 25 min decay for skipped-impression fatigue
+private const val CONTEXT_SHIFT_WINDOW_MS = 45.0 * 60_000.0          // network switch flushes prior-context bursts for 45 min
+private const val CONTEXT_SHIFT_DISCOUNT = 0.18                      // bursts from before arriving home/leaving drop 82%
 
 private const val W_BURST = 2.2
 private const val W_HABIT = 1.0
@@ -59,8 +68,9 @@ private const val W_TOD = 1.2
 private const val W_CALENDAR = 0.75
 private const val W_CONTEXT = 1.25
 private const val W_ONLINE = 1.6
-private const val W_NOTIF = 2.2
+private const val W_NOTIF = 2.6
 private const val W_LIVE = 2.5
+private const val W_MEDIA_ACTIVE = 1.4
 private const val W_FATIGUE = 1.15
 
 /**
@@ -144,6 +154,9 @@ data class DeviceContext(
     val carAudioConnected: Boolean = false,
     val powerSave: Boolean = false,
     val idleGapBucket: Int = 1,          // 0=rapid(<2m), 1=short(2-20m), 2=pocket(20-120m), 3=fresh(>2h)
+    val alarmSoon: Boolean = false,      // true when an alarm clock is scheduled within 45 min
+    val quietOn: Boolean = false,        // true when Do Not Disturb / Quiet focus mode is active
+    val activeMediaPkg: String? = null,  // package actively playing audio right now (STATE_PLAYING)
 ) {
     /**
      * Dynamic sparse feature tokens representing this exact moment (zero hardcoded app names).
@@ -168,6 +181,8 @@ data class DeviceContext(
         if (mediaPlaying) add("media_on")
         if (charging) add("pwr_chg")
         if (powerSave) add("pwr_save")
+        if (alarmSoon) add("alarm_soon")
+        if (quietOn) add("dnd_on")
         add("bat_$batteryBucket")
         add("bri_$brightnessBucket")
         add("vol_$volumeBucket")
@@ -204,6 +219,7 @@ data class DeviceContext(
             }
             add("x_${netBase}_$partOfDay")
             add("x_place_${placeRole}_$partOfDay")
+            if (idleGapBucket == 3 && onWifi && partOfDay == "morn") add("x_wake_morning")
             if (networkId.isNotEmpty() && networkId != "wifi" && networkId != "cell") {
                 add("x_netid_${networkId}_$partOfDay")
             }
@@ -211,13 +227,71 @@ data class DeviceContext(
     }
 }
 
-/** One unread notification signal for recency boosting, weighted by learned open-vs-dismiss utility. */
+/**
+ * One unread notification signal weighted by:
+ *  - [importanceWeight]: Android system importance + conversation/priority status + userSentiment + reply action + category
+ *  - [messageCount]: unread messages bundled inside MessagingStyle / Notification.number
+ *  - [utility]: learned per-app open-vs-dismiss probability from NotificationListenerService outcomes
+ */
 data class NotifSignal(
     val pkg: String,
     val postedAtMs: Long,
     val isLiveActivity: Boolean = false,
     val utility: Double = 1.0,
+    val importanceWeight: Double = 1.0,
+    val messageCount: Int = 1,
 )
+
+/**
+ * Zero-hardcoding importance weight for a single Android notification using NotificationListenerService.Ranking
+ * and standard OS notification metadata (importance, priority conversations, Android on-device userSentiment,
+ * direct/smart reply actions, MessagingStyle people, and Notification.category).
+ */
+internal fun notifImportanceWeight(
+    importance: Int,
+    isConversation: Boolean,
+    isImportantConversation: Boolean,
+    userSentiment: Int,
+    hasReplyAction: Boolean,
+    hasPerson: Boolean,
+    category: String?,
+    isAmbient: Boolean,
+): Double {
+    if (importance <= NotificationManager.IMPORTANCE_NONE) return 0.0
+    var w = when {
+        isAmbient || importance <= NotificationManager.IMPORTANCE_MIN -> 0.08
+        importance == NotificationManager.IMPORTANCE_LOW -> 0.25
+        importance >= NotificationManager.IMPORTANCE_HIGH -> 1.45
+        else -> 1.0
+    }
+    w *= when {
+        isImportantConversation -> 1.85
+        isConversation -> 1.45
+        hasPerson -> 1.25
+        else -> 1.0
+    }
+    w *= when (userSentiment) {
+        NotificationListenerService.Ranking.USER_SENTIMENT_POSITIVE -> 1.30
+        NotificationListenerService.Ranking.USER_SENTIMENT_NEGATIVE -> 0.25
+        else -> 1.0
+    }
+    if (hasReplyAction) w *= 1.25
+    w *= when (category) {
+        Notification.CATEGORY_MISSED_CALL,
+        Notification.CATEGORY_CALL,
+        Notification.CATEGORY_ALARM -> 1.60
+        Notification.CATEGORY_MESSAGE,
+        Notification.CATEGORY_EVENT,
+        Notification.CATEGORY_REMINDER -> 1.30
+        Notification.CATEGORY_PROMO,
+        Notification.CATEGORY_RECOMMENDATION,
+        Notification.CATEGORY_STATUS,
+        Notification.CATEGORY_SERVICE,
+        Notification.CATEGORY_SYSTEM -> 0.20
+        else -> 1.0
+    }
+    return w.coerceIn(0.04, 3.0)
+}
 
 /** Decaying passive-negative impression fatigue per package (Instagram "repetitive fatigue" / RecSys SINE). */
 data class FatigueState(
@@ -425,8 +499,8 @@ fun rankContextualPackages(
         }
     }
 
-    // Signal 7: Live unread notifications (5 min decay) + active ongoing Live Activities
-    val notif = HashMap<String, Double>()
+    // Signal 7: Importance- & volume-weighted unread notifications + active ongoing Live Activities
+    val notifMass = HashMap<String, Double>()
     val liveAct = HashMap<String, Double>()
     for (n in activeNotifications) {
         if (n.pkg.isEmpty() || n.pkg == selfPkg || n.postedAtMs > nowMs + 60_000L) continue
@@ -434,13 +508,24 @@ fun rankContextualPackages(
         if (n.isLiveActivity) {
             liveAct[n.pkg] = 1.0
         } else {
+            val imp = n.importanceWeight.coerceIn(0.0, 3.0)
+            if (imp <= 0.0) continue
             val age = (nowMs - n.postedAtMs).coerceAtLeast(0L).toDouble()
-            if (age <= 60 * 60_000.0) {
-                val boost = exp(-ln2 * age / NOTIF_HALF_LIFE_MS) * n.utility.coerceIn(0.15, 1.5)
-                notif[n.pkg] = maxOf(notif[n.pkg] ?: 0.0, boost) + 0.15 * boost
+            val (halfLife, maxAge) = when {
+                imp >= 1.1 -> NOTIF_IMPORTANT_HALF_LIFE_MS to (4.0 * 3600_000.0)
+                imp >= 0.4 -> NOTIF_NORMAL_HALF_LIFE_MS to (90.0 * 60_000.0)
+                else -> NOTIF_LOW_HALF_LIFE_MS to (30.0 * 60_000.0)
+            }
+            if (age <= maxAge) {
+                val countBoost = 1.0 + ln(n.messageCount.coerceIn(1, 25).toDouble()) * 0.75
+                val util = n.utility.coerceIn(0.15, 1.5)
+                val mass = exp(-ln2 * age / halfLife) * imp * util * countBoost
+                notifMass.merge(n.pkg, mass, Double::plus)
             }
         }
     }
+    val activeMedia = ctx.activeMediaPkg?.takeIf { it.isNotEmpty() && it != selfPkg }
+    if (activeMedia != null) candidates.add(activeMedia)
 
     // Include fallback counts for packages that haven't appeared in recent UsageEvents
     val maxFallback = fallbackCounts.entries.filter { it.key != selfPkg && it.value > 0 }.maxOfOrNull { it.value } ?: 0
@@ -460,20 +545,23 @@ fun rankContextualPackages(
         val sCal = ln(1.0 + (calMatch[pkg] ?: 0.0))
         val sCtx = (contextLift[pkg] ?: 0.0).coerceIn(-1.2, 2.8)
         val sOnline = onlineScore[pkg] ?: 0.0
-        val sNotif = (notif[pkg] ?: 0.0).coerceAtMost(1.8)
+        // Signal 8: Passive-negative impression fatigue (decays smoothly with 25-min half-life).
+        // Fatigue also directly attenuates unread notification pull so an app with a million unread messages
+        // that you deliberately keep skipping gets out of your way immediately.
+        val fState = fatigue[pkg]
+        val decayedFatigue = if (fState != null && fState.count > 0.0 && fState.updatedAtMs <= nowMs) {
+            val age = (nowMs - fState.updatedAtMs).coerceAtLeast(0L).toDouble()
+            fState.count * exp(-ln2 * age / FATIGUE_HALF_LIFE_MS)
+        } else 0.0
+        val sFatigue = if (decayedFatigue > 0.0) ln(1.0 + decayedFatigue) else 0.0
+        val notifAttenuation = 1.0 / (1.0 + decayedFatigue * 0.95)
+        val sNotif = ln(1.0 + (notifMass[pkg] ?: 0.0) * 1.15).coerceAtMost(3.2) * notifAttenuation
         val sLive = liveAct[pkg] ?: 0.0
+        val sMedia = if (pkg == activeMedia) 1.0 else 0.0
         val sFallback = if (maxFallback > 0 && sorted.isEmpty()) {
             ln(1.0 + (fallbackCounts[pkg] ?: 0).toDouble()) * 0.55
         } else if (maxFallback > 0 && (habit[pkg] ?: 0.0) == 0.0) {
             0.25 * ((fallbackCounts[pkg] ?: 0).toDouble() / maxFallback.toDouble())
-        } else 0.0
-
-        // Signal 8: Passive-negative impression fatigue (decays smoothly with 25-min half-life)
-        val fState = fatigue[pkg]
-        val sFatigue = if (fState != null && fState.count > 0.0 && fState.updatedAtMs <= nowMs) {
-            val age = (nowMs - fState.updatedAtMs).coerceAtLeast(0L).toDouble()
-            val decayed = fState.count * exp(-ln2 * age / FATIGUE_HALF_LIFE_MS)
-            ln(1.0 + decayed)
         } else 0.0
 
         val total = W_BURST * sBurst +
@@ -486,6 +574,7 @@ fun rankContextualPackages(
             W_ONLINE * sOnline +
             W_NOTIF * sNotif +
             W_LIVE * sLive +
+            W_MEDIA_ACTIVE * sMedia +
             sFallback -
             W_FATIGUE * sFatigue
 
@@ -689,6 +778,13 @@ fun readDeviceContext(ctx: Context): DeviceContext {
         else -> 3
     }
 
+    val alarmSoon = runCatching {
+        val nextTrigger = ctx.getSystemService(AlarmManager::class.java)?.nextAlarmClock?.triggerTime ?: 0L
+        nextTrigger > now && (nextTrigger - now) <= 45 * 60_000L
+    }.getOrDefault(false)
+    val quietOn = runCatching { Quiet.isOn(ctx) }.getOrDefault(false)
+    val activeMediaPkg = runCatching { currentMedia(ctx)?.takeIf { it.playing }?.pkg }.getOrNull()
+
     return DeviceContext(
         onWifi = onWifi,
         headphonesConnected = headphones,
@@ -706,6 +802,9 @@ fun readDeviceContext(ctx: Context): DeviceContext {
         carAudioConnected = carAudio,
         powerSave = powerSave,
         idleGapBucket = idleGapBucket,
+        alarmSoon = alarmSoon,
+        quietOn = quietOn,
+        activeMediaPkg = activeMediaPkg,
     )
 }
 
@@ -723,15 +822,76 @@ internal fun notifUtility(opened: Int, dismissed: Int): Double {
     return (0.18 + rate * 1.17).coerceIn(0.18, 1.35)
 }
 
-/** Reads clearable unread notifications AND ongoing Live Activities from Honeycomb's existing MediaListener. */
+/**
+ * Reads clearable unread notifications AND ongoing Live Activities from Honeycomb's existing MediaListener,
+ * enriched with Android's NotificationListenerService.RankingMap (importance, priority conversations,
+ * on-device userSentiment, smart/direct replies, MessagingStyle unread message count, and OS category).
+ */
 private fun readActiveNotifSignals(ctx: Context): List<NotifSignal> = runCatching {
-    val live = MediaListener.Defaults.live?.activeNotifications.orEmpty().toList()
+    val listener = MediaListener.Defaults.live ?: return@runCatching emptyList()
+    val active = listener.activeNotifications.orEmpty()
+    val rankingMap = runCatching { listener.currentRanking }.getOrNull()
+    val ranking = NotificationListenerService.Ranking()
     val p = ctx.getSharedPreferences(CONTEXT_PREFS, Context.MODE_PRIVATE)
-    val out = ArrayList<NotifSignal>(live.size)
-    for (n in notes(live, ctx.packageName)) {
-        val u = notifUtility(p.getInt("no:${n.pkg}", 0), p.getInt("nd:${n.pkg}", 0))
-        out.add(NotifSignal(n.pkg, n.posted, isLiveActivity = false, utility = u))
+    val self = ctx.packageName
+    val out = ArrayList<NotifSignal>(active.size + 2)
+
+    for (sbn in active) {
+        if (!sbn.isClearable || sbn.packageName == self) continue
+        val n = sbn.notification
+        if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) continue
+        val extras = n.extras
+        val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+        val text = (extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)
+            ?: extras?.getCharSequence(Notification.EXTRA_TEXT))?.toString()
+        if (title.isNullOrBlank() && text.isNullOrBlank()) continue
+
+        val hasRanking = rankingMap?.getRanking(sbn.key, ranking) == true
+        val importance = if (hasRanking) ranking.importance else NotificationManager.IMPORTANCE_DEFAULT
+        val isConversation = hasRanking && ranking.isConversation
+        val isImportantConversation = hasRanking && (ranking.channel?.isImportantConversation == true)
+        val sentiment = if (hasRanking) ranking.userSentiment else NotificationListenerService.Ranking.USER_SENTIMENT_NEUTRAL
+        val isAmbient = hasRanking && ranking.isAmbient
+        val hasSmartReplies = hasRanking && ranking.smartReplies.isNotEmpty()
+        val hasDirectReply = n.actions?.any { !it.remoteInputs.isNullOrEmpty() } == true
+
+        val msgArray = if (Build.VERSION.SDK_INT >= 33) {
+            extras?.getParcelableArray(Notification.EXTRA_MESSAGES, Parcelable::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            extras?.getParcelableArray(Notification.EXTRA_MESSAGES)
+        }
+        val peopleList = if (Build.VERSION.SDK_INT >= 33) {
+            extras?.getParcelableArrayList(Notification.EXTRA_PEOPLE_LIST, Person::class.java)
+        } else null
+        val hasPerson = !peopleList.isNullOrEmpty() ||
+            extras?.containsKey(Notification.EXTRA_MESSAGING_PERSON) == true ||
+            !msgArray.isNullOrEmpty()
+        val msgCount = maxOf(1, msgArray?.size ?: 1, n.number.coerceAtLeast(1)).coerceAtMost(25)
+
+        val impWeight = notifImportanceWeight(
+            importance = importance,
+            isConversation = isConversation,
+            isImportantConversation = isImportantConversation,
+            userSentiment = sentiment,
+            hasReplyAction = hasDirectReply || hasSmartReplies,
+            hasPerson = hasPerson,
+            category = n.category,
+            isAmbient = isAmbient,
+        )
+        val u = notifUtility(p.getInt("no:${sbn.packageName}", 0), p.getInt("nd:${sbn.packageName}", 0))
+        out.add(
+            NotifSignal(
+                pkg = sbn.packageName,
+                postedAtMs = sbn.postTime,
+                isLiveActivity = false,
+                utility = u,
+                importanceWeight = impWeight,
+                messageCount = msgCount,
+            ),
+        )
     }
+
     for (la in liveUpdates(ctx)) {
         out.add(NotifSignal(la.pkg, System.currentTimeMillis(), isLiveActivity = true, utility = 1.0))
     }
@@ -779,11 +939,29 @@ fun recordLaunch(
     // Clear fatigue on the app the user actually chose
     editor.remove("f:$pkg")
 
+    // Learn notification utility even when the user opens or ignores apps straight from the Dynamic Grid
+    // (not just when tapping/swiping in Notification Centre): if an app had unread alerts and you opened it,
+    // count an open; if it had unread alerts and you skipped it in the grid, count an ignore.
+    val activeNotifPkgs = runCatching {
+        MediaListener.Defaults.live?.activeNotifications
+            ?.asSequence()
+            ?.filter { it.isClearable && it.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 }
+            ?.map { it.packageName }
+            ?.toSet()
+            .orEmpty()
+    }.getOrDefault(emptySet())
+    if (pkg in activeNotifPkgs) {
+        editor.putInt("no:$pkg", cPrefs.getInt("no:$pkg", 0) + 1)
+    }
+
     val ln2 = ln(2.0)
     val prevFatigue = readFatigue(ctx)
     val skipped = shownDynamicPkgs.asSequence().filter { it.isNotEmpty() && it != pkg && it != ctx.packageName }.distinct().toList()
     for (sk in skipped) {
         updateOnlineWeights(weights, sk, activeBuckets, positive = false)
+        if (sk in activeNotifPkgs) {
+            editor.putInt("nd:$sk", cPrefs.getInt("nd:$sk", 0) + 1)
+        }
         val cur = prevFatigue[sk]
         val decayed = if (cur != null && cur.updatedAtMs <= now) {
             cur.count * exp(-ln2 * (now - cur.updatedAtMs).coerceAtLeast(0L).toDouble() / FATIGUE_HALF_LIFE_MS)

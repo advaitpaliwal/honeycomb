@@ -286,4 +286,101 @@ class ContextualRankTest {
             rankStackWidgets(saved, { pkgs[it] }, nightHome),
         )
     }
+
+    @Test fun piledUpImportantNotificationsBeatPromoSpamEvenAfterTwentyMinutes() {
+        val now = 1_760_000_000_000L
+        val chatImp = notifImportanceWeight(
+            importance = android.app.NotificationManager.IMPORTANCE_HIGH,
+            isConversation = true,
+            isImportantConversation = true,
+            userSentiment = android.service.notification.NotificationListenerService.Ranking.USER_SENTIMENT_POSITIVE,
+            hasReplyAction = true,
+            hasPerson = true,
+            category = android.app.Notification.CATEGORY_MESSAGE,
+            isAmbient = false,
+        )
+        val promoImp = notifImportanceWeight(
+            importance = android.app.NotificationManager.IMPORTANCE_LOW,
+            isConversation = false,
+            isImportantConversation = false,
+            userSentiment = android.service.notification.NotificationListenerService.Ranking.USER_SENTIMENT_NEGATIVE,
+            hasReplyAction = false,
+            hasPerson = false,
+            category = android.app.Notification.CATEGORY_PROMO,
+            isAmbient = false,
+        )
+        assertTrue("Priority human message must far outweigh promo alert", chatImp > promoImp * 20.0)
+
+        // 10 fresh promo notifications from a shopping app vs 3 important chat threads (with 4 msgs each) from 20 min ago
+        val notifs = buildList {
+            repeat(10) { i ->
+                add(NotifSignal("com.promo.shop", now - i * 20_000L, utility = 0.22, importanceWeight = promoImp, messageCount = 1))
+            }
+            repeat(3) { i ->
+                add(NotifSignal("com.chat.app", now - (20 - i) * 60_000L, utility = 1.25, importanceWeight = chatImp, messageCount = 4))
+            }
+        }
+        val ranked = rankContextualPackages(
+            events = listOf(
+                LaunchEvent("com.habit.browser", now - 2 * 3600_000L, dwellMs = 120_000L),
+                LaunchEvent("com.habit.browser", now - 5 * 3600_000L, dwellMs = 120_000L),
+            ),
+            fallbackCounts = mapOf("com.habit.browser" to 20),
+            contextCounts = emptyMap(),
+            nowMs = now,
+            ctx = DeviceContext(onWifi = true),
+            activeNotifications = notifs,
+            selfPkg = "org.honeycomb.launcher",
+            zoneId = utc,
+        )
+        assertEquals("App with piled-up important human messages should shoot to #1", "com.chat.app", ranked.ordered.first())
+        assertTrue(
+            "Promo spam app should stay below normal habit app despite 10 fresh notifications",
+            ranked.ordered.indexOf("com.habit.browser") < ranked.ordered.indexOf("com.promo.shop"),
+        )
+    }
+
+    @Test fun millionUnreadMessagesInIgnoredAppStillGetsSuppressedWhenRepeatedlySkipped() {
+        val now = 1_760_000_000_000L
+        val highChatImp = notifImportanceWeight(
+            importance = android.app.NotificationManager.IMPORTANCE_HIGH,
+            isConversation = true,
+            isImportantConversation = false,
+            userSentiment = android.service.notification.NotificationListenerService.Ranking.USER_SENTIMENT_NEUTRAL,
+            hasReplyAction = true,
+            hasPerson = true,
+            category = android.app.Notification.CATEGORY_MESSAGE,
+            isAmbient = false,
+        )
+        // Noisy chat app has 15 unread threads (25 msgs each!) BUT user routinely ignores it (low learned utility)
+        // and has skipped it 4 times in the Dynamic Grid
+        val noisyNotifs = (0 until 15).map { i ->
+            NotifSignal(
+                pkg = "com.noisy.groupchat",
+                postedAtMs = now - i * 60_000L,
+                utility = notifUtility(opened = 0, dismissed = 18),
+                importanceWeight = highChatImp,
+                messageCount = 25,
+            )
+        }
+        val ranked = rankContextualPackages(
+            events = listOf(
+                LaunchEvent("com.wanted.app", now - 10 * 60_000L, dwellMs = 120_000L),
+                LaunchEvent("com.wanted.app", now - 24 * 3600_000L, dwellMs = 120_000L),
+            ),
+            fallbackCounts = mapOf("com.wanted.app" to 15),
+            contextCounts = emptyMap(),
+            nowMs = now,
+            ctx = DeviceContext(onWifi = true),
+            activeNotifications = noisyNotifs,
+            selfPkg = "org.honeycomb.launcher",
+            zoneId = utc,
+            fatigue = mapOf("com.noisy.groupchat" to FatigueState(count = 4.0, updatedAtMs = now - 60_000L)),
+        )
+        assertEquals(
+            "Even with hundreds of unread messages, a repeatedly ignored chat app must yield to the app you actually use",
+            "com.wanted.app",
+            ranked.ordered.first(),
+        )
+    }
 }
