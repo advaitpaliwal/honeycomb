@@ -6,6 +6,12 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.BoxScope
 import org.honeycomb.launcher.design.Space
 
+import android.view.HapticFeedbackConstants
+import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.draw.alpha
 import android.content.Context
 import android.content.Intent
 import android.content.pm.LauncherApps
@@ -72,16 +78,30 @@ import kotlinx.coroutines.launch
 class FeedPauseActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureEdgeToEdgeBars()
         val pkg = intent.getStringExtra(EXTRA_PKG) ?: return finish()
         val label = intent.getStringExtra(EXTRA_LABEL) ?: pkg
-        onBackPressedDispatcher.addCallback(this) { notNow() }
+        val preview = intent.getBooleanExtra(EXTRA_PREVIEW, false)
+        val icon = runCatching {
+            packageManager.getApplicationIcon(pkg).toBitmap(192, 192).asImageBitmap()
+        }.getOrNull()
+        onBackPressedDispatcher.addCallback(this) { if (preview) finish() else notNow() }
         setContent {
-            HoneycombTheme { PauseScreen(label, onOpen = {
-                FeedPass.grant(pkg)
-                // Back to the app's own task: finishing alone returns to whatever task was under the pause.
-                packageManager.getLaunchIntentForPackage(pkg)?.let { startActivity(it) }
-                finish()
-            }, onNotNow = ::notNow) }
+            ProvideScale {
+                PauseScreen(
+                    label = label,
+                    icon = icon,
+                    onOpen = {
+                        if (!preview) {
+                            FeedPass.grant(pkg)
+                            // Back to the app's own task: finishing alone returns to whatever task was under the pause.
+                            packageManager.getLaunchIntentForPackage(pkg)?.let { startActivity(it) }
+                        }
+                        finish()
+                    },
+                    onNotNow = { if (preview) finish() else notNow() },
+                )
+            }
         }
     }
 
@@ -93,43 +113,106 @@ class FeedPauseActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_PKG = "pkg"
         private const val EXTRA_LABEL = "label"
-        fun intent(ctx: Context, pkg: String, label: String) = Intent(ctx, FeedPauseActivity::class.java)
-            .putExtra(EXTRA_PKG, pkg).putExtra(EXTRA_LABEL, label)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        private const val EXTRA_PREVIEW = "preview"
+        fun intent(ctx: Context, pkg: String, label: String, preview: Boolean = false) = Intent(ctx, FeedPauseActivity::class.java)
+            .putExtra(EXTRA_PKG, pkg).putExtra(EXTRA_LABEL, label).putExtra(EXTRA_PREVIEW, preview)
+            .addFlags(if (preview) 0 else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
     }
 }
 
-/** One breath (in 2.5 s, out 2.5 s), then the two choices fade in. */
+/** Opal-inspired mindful pause: whisper-soft concentric breathing rings + smooth progress arc + calm prompt. */
 @Composable
-private fun PauseScreen(label: String, onOpen: () -> Unit, onNotNow: () -> Unit) {
+private fun PauseScreen(label: String, icon: ImageBitmap?, onOpen: () -> Unit, onNotNow: () -> Unit) {
+    val reduce = HoneycombTheme.reduceMotion
+    val view = LocalView.current
+    val progress = remember { Animatable(0f) }
     var ready by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { delay(Motion.BREATH_MS) ; ready = true }
+
+    LaunchedEffect(Unit) {
+        if (reduce) {
+            delay(Motion.BREATH_MS)
+            progress.snapTo(1f)
+        } else {
+            val half = (Motion.BREATH_MS / 2).toInt()
+            progress.animateTo(0.5f, tween(durationMillis = half, easing = LinearEasing))
+            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            progress.animateTo(1f, tween(durationMillis = half, easing = LinearEasing))
+        }
+        ready = true
+        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+    }
+
     val breath = rememberInfiniteTransition(label = "breath")
-    val s by breath.animateFloat(0.55f, 1f, infiniteRepeatable(tween((Motion.BREATH_MS / 2).toInt(), easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "s")
+    val breathPhase by breath.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(durationMillis = (Motion.BREATH_MS / 2).toInt(), easing = FastOutSlowInEasing),
+            RepeatMode.Reverse,
+        ),
+        label = "breath-phase",
+    )
+    val b = if (reduce) 0.5f else breathPhase
+    val secsLeft = kotlin.math.ceil(((1f - progress.value) * Motion.BREATH_MS) / 1000.0).toInt().coerceAtLeast(1)
+    val phaseTitle = when {
+        ready -> "Open $label?"
+        progress.value < 0.5f -> "Take a deep breath"
+        else -> "And let it out"
+    }
+    val phaseSubtitle = when {
+        ready -> "Still worth your time?"
+        progress.value < 0.5f -> "Inhale slowly · ${secsLeft}s"
+        else -> "Exhale slowly · ${secsLeft}s"
+    }
+
     ScreenFrame(Modifier.testTag("feed-pause")) {
-        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-            BasicText(if (ready) "Open $label?" else "Breathe", Modifier.padding(top = Space.xl),
-                style = HoneycombType.title.copy(textAlign = TextAlign.Center))
-            // the circle takes the room between the title and the buttons, so it never runs into either
-            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(vertical = Space.l), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(minOf(maxWidth, maxHeight, BREATH_SIZE)).scale(s).clip(CircleShape)
-                    .background(Brush.radialGradient(BreathPalette.gradient)))
+        Column(
+            Modifier.fillMaxSize().padding(bottom = Space.l),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                MindfulBreathOrb(
+                    progress = progress.value,
+                    breath = b,
+                    accentColors = BreathPalette.gradient,
+                    appIcon = icon,
+                    label = label,
+                    phaseTitle = phaseTitle,
+                    phaseSubtitle = phaseSubtitle,
+                )
             }
-            // the choices' room is kept while they are hidden, so the circle does not move when they appear
-            Column(Modifier.fillMaxWidth().heightIn(min = ControlSize.large * 2 + Space.s)) {
-                AnimatedVisibility(ready, Modifier.fillMaxWidth(), enter = fadeIn(tween(Motion.CHOICES_FADE_MS))) {
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                        CapsuleButton("Not now", onNotNow, Modifier.fillMaxWidth().testTag("feed-Not now"))
-                        CapsuleButton("Open", onOpen, Modifier.fillMaxWidth().testTag("feed-Open"))
-                    }
+
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(ButtonSize.stackGap),
+            ) {
+                // Always allow bailing out immediately (just like Opal)
+                CapsuleButton(
+                    text = "Not now",
+                    onClick = onNotNow,
+                    modifier = Modifier.fillMaxWidth().testTag("feed-Not now"),
+                    height = ButtonSize.large,
+                    filled = true,
+                )
+                if (ready) {
+                    CapsuleButton(
+                        text = "Open $label",
+                        onClick = onOpen,
+                        modifier = Modifier.fillMaxWidth().testTag("feed-Open"),
+                        height = ButtonSize.large,
+                    )
+                } else {
+                    CapsuleButton(
+                        text = "Wait ${secsLeft}s",
+                        onClick = {},
+                        modifier = Modifier.fillMaxWidth().alpha(0.45f),
+                        height = ButtonSize.large,
+                    )
                 }
             }
         }
     }
 }
-
-/** The breathing circle's largest size. */
-private val BREATH_SIZE = ControlSize.xLarge * 3
 
 private data class BlockableApp(
     val packageName: String,
@@ -150,6 +233,7 @@ class FeedsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureEdgeToEdgeBars()
         AppCache.start(this)
         setContent {
             ProvideScale {
@@ -306,6 +390,13 @@ private sealed interface BlockRoute {
     data class WebsiteCategoryDetail(val categoryId: String) : BlockRoute
 }
 
+private fun blockRouteDepth(route: BlockRoute): Int = when (route) {
+    BlockRoute.Main -> 0
+    is BlockRoute.AppDetail -> if (route.fromMore) 2 else 1
+    BlockRoute.MoreFeeds, BlockRoute.Apps, BlockRoute.Websites -> 1
+    is BlockRoute.AppCategoryDetail, is BlockRoute.WebsiteCategoryDetail -> 2
+}
+
 private fun shortFeatureLabel(ruleLabel: String, rawLabel: String): String =
     rawLabel
         .removePrefix("Block ")
@@ -419,7 +510,19 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
             return activeNames.joinToString(", ")
         }
 
-        when (val curRoute = route) {
+        val reduce = HoneycombTheme.reduceMotion
+        androidx.compose.animation.AnimatedContent(
+            targetState = route,
+            modifier = Modifier.fillMaxSize().background(HoneycombColors.background),
+            transitionSpec = {
+                routeTransitionSpec(
+                    forward = blockRouteDepth(targetState) >= blockRouteDepth(initialState),
+                    reduceMotion = reduce,
+                )
+            },
+            label = "block-route",
+        ) { curRoute ->
+        when (curRoute) {
             BlockRoute.Main -> {
                 val shownMain = installedRows.ifEmpty { uninstalledRows.take(3) }
                 val remainingCount = if (installedRows.isNotEmpty()) uninstalledRows.size else (uninstalledRows.size - 3).coerceAtLeast(0)
@@ -484,6 +587,7 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                                     count = feedGroupSize,
                                     appIcon = icon,
                                     monogram = if (icon == null) rule.label.take(1).uppercase() else null,
+                                    accentActive = summary != "Off",
                                     onClick = { route = BlockRoute.AppDetail(rule.label, fromMore = false) },
                                     modifier = Modifier.testTag("feed-row-${rule.label}"),
                                 )
@@ -537,13 +641,28 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                     item(key = "opt-pause") {
                         CleanSwitchRow(
                             title = "Pause before opening",
-                            subtitle = if (pauseOn) "5-second pause enabled" else "Off",
+                            subtitle = if (pauseOn) "5-second mindful breath" else "Off",
                             checked = pauseOn,
                             onCheckedChange = { next -> if (!locked || next) onTogglePause(next) },
                             index = 0,
-                            count = 2,
+                            count = 3,
                             glyph = Symbols.timer,
                             modifier = Modifier.testTag("feed-toggle-pause"),
+                        )
+                    }
+                    item(key = "opt-pause-preview") {
+                        NavSummaryRow(
+                            title = "Preview pause screen",
+                            valueText = "5s",
+                            index = 1,
+                            count = 3,
+                            glyph = Symbols.sun,
+                            onClick = {
+                                val sample = installedRows.firstOrNull()?.first?.let { it.packageName to it.label }
+                                    ?: (packageName to "Instagram")
+                                startActivity(FeedPauseActivity.intent(this@FeedsActivity, sample.first, sample.second, preview = true))
+                            },
+                            modifier = Modifier.testTag("feed-preview-pause"),
                         )
                     }
                     item(key = "opt-strict") {
@@ -555,8 +674,8 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                                 FeedSwitches.toggleStrict(this@FeedsActivity)
                                 this@FeedsActivity.tick++
                             },
-                            index = 1,
-                            count = 2,
+                            index = 2,
+                            count = 3,
                             glyph = Symbols.lock,
                             modifier = Modifier.testTag("block-toggle-strict"),
                         )
@@ -641,6 +760,7 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                                     index = idx,
                                     count = uninstalledRows.size,
                                     monogram = rule.label.take(1).uppercase(),
+                                    accentActive = summary != "Off",
                                     onClick = { route = BlockRoute.AppDetail(rule.label, fromMore = true) },
                                     modifier = Modifier.testTag("feed-row-${rule.label}"),
                                 )
@@ -1052,6 +1172,7 @@ private fun shortCategoryTitle(category: WebsiteCategory): String = when (catego
                 }
             }
         }
+        }
     }
 }
 
@@ -1063,7 +1184,7 @@ private fun AccessScreen(onButton: () -> Unit) =
     OnboardingPage("Keep distractions\nblocked",
         "Turn on Honeycomb Block in Accessibility. Honeycomb checks only which screen or URL is open locally on your phone, so calls and messages stay untouched.",
         Modifier.testTag("feeds-access")) {
-        CapsuleButton("Turn on", onButton, Modifier.fillMaxWidth())
+        CapsuleButton("Turn on", onButton, Modifier.fillMaxWidth(), height = ButtonSize.large, filled = true)
     }
 
 /** Quick Settings tile so Block stays one tap away from Android's system Quick Settings panel. */
@@ -1104,6 +1225,7 @@ class HoneycombSettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureEdgeToEdgeBars()
         AppUpdater.loadCached(this)
         val autoStart = intent.getBooleanExtra(AppUpdater.EXTRA_START_UPDATE, false)
         // SetupActivity reads this action as a re-run: it shows "You're all set" even when nothing is missing
@@ -1155,106 +1277,121 @@ class HoneycombSettingsActivity : ComponentActivity() {
                 val quietRepeat = remember(quietMode) { Quiet.repeatCallers(this@HoneycombSettingsActivity) }
                 val view = androidx.compose.ui.platform.LocalView.current
 
-                Column(
-                    Modifier.fillMaxSize().background(HoneycombColors.background).safeDrawingPadding()
-                        .padding(horizontal = 16.dp, vertical = 12.dp).testTag("honeycomb-settings"),
+                LazyColumn(
+                    Modifier.fillMaxSize().background(HoneycombColors.background).safeDrawingPadding().testTag("honeycomb-settings"),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    MinimalScreenHeader(title = "Settings", modifier = Modifier.padding(bottom = 12.dp))
-                    NavSummaryRow(
-                        title = "Home screen",
-                        valueText = "${homeStart.label} · ${homeStart.subtitle}",
-                        index = 0,
-                        count = 5,
-                        glyph = Symbols.apps,
-                        onClick = {
-                            val modes = HomeStartMode.entries
-                            val next = modes[(modes.indexOf(homeStart) + 1) % modes.size]
-                            homeStart = next
-                            AppOrder.saveHomeStart(this@HoneycombSettingsActivity, next)
-                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                        },
-                        modifier = Modifier.testTag("settings-home-start"),
-                    )
-                    NavSummaryRow(
-                        title = "Quiet calls",
-                        valueText = Quiet.summary(quietMode, quietRepeat),
-                        index = 1,
-                        count = 5,
-                        glyph = Symbols.moon,
-                        onClick = {
-                            val modes = Quiet.CallMode.entries
-                            val next = modes[(modes.indexOf(quietMode) + 1) % modes.size]
-                            if (Quiet.setCallMode(this@HoneycombSettingsActivity, next)) {
-                                quietMode = next
+                    item(key = "header") {
+                        MinimalScreenHeader(title = "Settings", modifier = Modifier.padding(bottom = 12.dp))
+                    }
+                    item(key = "home-start") {
+                        NavSummaryRow(
+                            title = "Home screen",
+                            valueText = "${homeStart.label} · ${homeStart.subtitle}",
+                            index = 0,
+                            count = 5,
+                            glyph = Symbols.apps,
+                            showChevron = false,
+                            onClick = {
+                                val modes = HomeStartMode.entries
+                                val next = modes[(modes.indexOf(homeStart) + 1) % modes.size]
+                                homeStart = next
+                                AppOrder.saveHomeStart(this@HoneycombSettingsActivity, next)
                                 view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                            }
-                        },
-                        modifier = Modifier.testTag("settings-quiet-calls"),
-                    )
-                    NavSummaryRow(
-                        title = "Setup",
-                        valueText = "Permissions & home app",
-                        index = 2,
-                        count = 5,
-                        glyph = Symbols.apps,
-                        onClick = { startActivity(setup) },
-                        modifier = Modifier.testTag("settings-setup"),
-                    )
-                    NavSummaryRow(
-                        title = "Block",
-                        valueText = "Feeds, apps & websites",
-                        index = 3,
-                        count = 5,
-                        glyph = Symbols.block,
-                        onClick = { startActivity(Intent(this@HoneycombSettingsActivity, FeedsActivity::class.java)) },
-                        modifier = Modifier.testTag("settings-feeds"),
-                    )
-                    NavSummaryRow(
-                        title = updateTitle,
-                        valueText = updateSubtitle,
-                        index = 4,
-                        count = 5,
-                        glyph = Symbols.download,
-                        accentActive = updateActive,
-                        onClick = {
-                            when (val s = updateState) {
-                                is UpdateState.Available -> scope.launch {
-                                    if (AppUpdater.downloadAndInstall(this@HoneycombSettingsActivity, s.release)) {
-                                        val ready = AppUpdater.state.value as? UpdateState.ReadyToInstall
-                                        if (ready != null && !packageManager.canRequestPackageInstalls()) {
-                                            pendingInstallPath = ready.apkPath
-                                        }
-                                    }
+                            },
+                            modifier = Modifier.testTag("settings-home-start"),
+                        )
+                    }
+                    item(key = "quiet-calls") {
+                        NavSummaryRow(
+                            title = "Quiet calls",
+                            valueText = Quiet.summary(quietMode, quietRepeat),
+                            index = 1,
+                            count = 5,
+                            glyph = Symbols.moon,
+                            showChevron = false,
+                            onClick = {
+                                val modes = Quiet.CallMode.entries
+                                val next = modes[(modes.indexOf(quietMode) + 1) % modes.size]
+                                if (Quiet.setCallMode(this@HoneycombSettingsActivity, next)) {
+                                    quietMode = next
+                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
                                 }
-                                is UpdateState.ReadyToInstall -> {
-                                    if (!AppUpdater.launchInstaller(this@HoneycombSettingsActivity, s.apkPath)) {
-                                        pendingInstallPath = s.apkPath
-                                    }
-                                }
-                                is UpdateState.Error -> {
-                                    val rel = s.release
-                                    scope.launch {
-                                        if (rel != null) {
-                                            if (AppUpdater.downloadAndInstall(this@HoneycombSettingsActivity, rel)) {
-                                                val ready = AppUpdater.state.value as? UpdateState.ReadyToInstall
-                                                if (ready != null && !packageManager.canRequestPackageInstalls()) {
-                                                    pendingInstallPath = ready.apkPath
-                                                }
+                            },
+                            modifier = Modifier.testTag("settings-quiet-calls"),
+                        )
+                    }
+                    item(key = "setup") {
+                        NavSummaryRow(
+                            title = "Setup",
+                            valueText = "Permissions & home app",
+                            index = 2,
+                            count = 5,
+                            glyph = Symbols.apps,
+                            onClick = { startActivity(setup) },
+                            modifier = Modifier.testTag("settings-setup"),
+                        )
+                    }
+                    item(key = "block") {
+                        NavSummaryRow(
+                            title = "Block",
+                            valueText = "Feeds, apps & websites",
+                            index = 3,
+                            count = 5,
+                            glyph = Symbols.block,
+                            onClick = { startActivity(Intent(this@HoneycombSettingsActivity, FeedsActivity::class.java)) },
+                            modifier = Modifier.testTag("settings-feeds"),
+                        )
+                    }
+                    item(key = "updates") {
+                        NavSummaryRow(
+                            title = updateTitle,
+                            valueText = updateSubtitle,
+                            index = 4,
+                            count = 5,
+                            glyph = Symbols.download,
+                            accentActive = updateActive,
+                            showChevron = false,
+                            onClick = {
+                                when (val s = updateState) {
+                                    is UpdateState.Available -> scope.launch {
+                                        if (AppUpdater.downloadAndInstall(this@HoneycombSettingsActivity, s.release)) {
+                                            val ready = AppUpdater.state.value as? UpdateState.ReadyToInstall
+                                            if (ready != null && !packageManager.canRequestPackageInstalls()) {
+                                                pendingInstallPath = ready.apkPath
                                             }
-                                        } else {
-                                            AppUpdater.checkNow(this@HoneycombSettingsActivity)
                                         }
                                     }
+                                    is UpdateState.ReadyToInstall -> {
+                                        if (!AppUpdater.launchInstaller(this@HoneycombSettingsActivity, s.apkPath)) {
+                                            pendingInstallPath = s.apkPath
+                                        }
+                                    }
+                                    is UpdateState.Error -> {
+                                        val rel = s.release
+                                        scope.launch {
+                                            if (rel != null) {
+                                                if (AppUpdater.downloadAndInstall(this@HoneycombSettingsActivity, rel)) {
+                                                    val ready = AppUpdater.state.value as? UpdateState.ReadyToInstall
+                                                    if (ready != null && !packageManager.canRequestPackageInstalls()) {
+                                                        pendingInstallPath = ready.apkPath
+                                                    }
+                                                }
+                                            } else {
+                                                AppUpdater.checkNow(this@HoneycombSettingsActivity)
+                                            }
+                                        }
+                                    }
+                                    UpdateState.Idle, is UpdateState.UpToDate -> scope.launch {
+                                        AppUpdater.checkNow(this@HoneycombSettingsActivity)
+                                    }
+                                    UpdateState.Checking, is UpdateState.Downloading, is UpdateState.Verifying -> Unit
                                 }
-                                UpdateState.Idle, is UpdateState.UpToDate -> scope.launch {
-                                    AppUpdater.checkNow(this@HoneycombSettingsActivity)
-                                }
-                                UpdateState.Checking, is UpdateState.Downloading, is UpdateState.Verifying -> Unit
-                            }
-                        },
-                        modifier = Modifier.testTag("settings-updates"),
-                    )
+                            },
+                            modifier = Modifier.testTag("settings-updates"),
+                        )
+                    }
                 }
             }
         }

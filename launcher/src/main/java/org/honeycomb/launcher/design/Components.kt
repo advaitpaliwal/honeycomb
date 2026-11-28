@@ -1,6 +1,16 @@
 package org.honeycomb.launcher.design
 
+import android.view.HapticFeedbackConstants
+import androidx.activity.ComponentActivity
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -10,6 +20,12 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.honeycomb.launcher.Motion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -111,6 +127,66 @@ fun Modifier.fluidPress(
     }
 }
 
+/**
+ * Tactile click modifier for list rows, search rows, and menu items: combines spring scale compression on finger-down
+ * with a subtle pressed state overlay (zero harsh square ripple) and optional haptic tick.
+ */
+fun Modifier.tactileClickable(
+    onClick: () -> Unit,
+    pressedScale: Float = 0.97f,
+    role: Role = Role.Button,
+    haptic: Boolean = false,
+): Modifier = composed {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val view = LocalView.current
+    this
+        .fluidPress(interaction, pressedScale = pressedScale)
+        .then(if (pressed) Modifier.background(HoneycombColors.pressed) else Modifier)
+        .clickable(
+            interactionSource = interaction,
+            indication = null,
+            role = role,
+            onClick = {
+                if (haptic) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                onClick()
+            },
+        )
+}
+
+/**
+ * Unified spatial spring transition for sub-page drill-downs and step flows (Block routes, Settings, Quiet, Face Picker, Setup).
+ * Uses [Motion.tap] (critically damped, zero wobble) and snaps cleanly when Android's Reduce Motion is active.
+ */
+fun routeTransitionSpec(forward: Boolean, reduceMotion: Boolean): ContentTransform {
+    if (reduceMotion) {
+        return ContentTransform(fadeIn(snap()), fadeOut(snap()))
+    }
+    val enter = fadeIn(Motion.tap.spec()) +
+        slideInHorizontally(Motion.tap.spec()) { fullW -> if (forward) fullW / 14 else -fullW / 14 } +
+        scaleIn(Motion.tap.spec(), initialScale = 0.985f)
+    val exit = fadeOut(Motion.tap.spec()) +
+        slideOutHorizontally(Motion.tap.spec()) { fullW -> if (forward) -fullW / 18 else fullW / 18 } +
+        scaleOut(Motion.tap.spec(), targetScale = 0.985f)
+    return ContentTransform(enter, exit)
+}
+
+/** Configures edge-to-edge transparent system bars with light/dark icon appearance matching Honeycomb's active ground. */
+fun ComponentActivity.configureEdgeToEdgeBars() {
+    WindowCompat.setDecorFitsSystemWindows(window, false)
+    window.isNavigationBarContrastEnforced = false
+    val dark = Native.isDark(this)
+    val ground = Native.ground(Native.scheme(this), dark)
+    window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(ground.toArgb()))
+    WindowInsetsControllerCompat(window, window.decorView).apply {
+        show(WindowInsetsCompat.Type.statusBars())
+        show(WindowInsetsCompat.Type.navigationBars())
+        val lightIcons = ground.luminance() > 0.5f
+        isAppearanceLightStatusBars = lightIcons
+        isAppearanceLightNavigationBars = lightIcons
+    }
+}
+
 /** A Control Centre tile's surface: true Apple Watch full-pill [Capsule] fill. */
 fun Modifier.controlSurface(fill: Color, status: Boolean = false): Modifier = clip(Capsule).background(fill)
 
@@ -188,9 +264,10 @@ object WatchButtonSize {
 }
 
 /**
- * A tonal circle (surfaceContainerHighest), 36 wp, its glyph centred: back, x, bell, previous, play, next. [tint] fills
- * it instead (a remove button in errorContainer); not [enabled], it is dimmed and inert. With [on] set it is a toggle
- * filled with [tint] (primary) when on. The glyph takes the fill's on-colour.
+ * A tonal circle (surfaceContainerHighest), [ButtonSize.circleRegular] by default, its glyph centred: back, x, bell,
+ * previous, play, next. [tint] fills it instead (a remove button in errorContainer); not [enabled], it is dimmed and
+ * inert. With [on] set it is a toggle filled with [tint] (primary) when on. Visual bounds stay exact while
+ * [WatchTouchTargets] expands pointer hit-slop automatically.
  */
 @Composable
 fun CircleButton(
@@ -198,7 +275,7 @@ fun CircleButton(
     contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    size: Dp = 36.wp,
+    size: Dp = ButtonSize.circleRegular,
     tint: Color? = null,
     enabled: Boolean = true,
     on: Boolean? = null,
@@ -212,26 +289,43 @@ fun CircleButton(
     }
     val tap = if (on != null) Modifier.tap(on, onClick, onLongClick, interaction).semantics { this.contentDescription = contentDescription }
     else Modifier.tap(null, { if (enabled) onClick() }, onLongClick, interaction).action(contentDescription, enabled, onClick)
-    Box(modifier.sizeIn(minWidth = ControlSize.minHitArea, minHeight = ControlSize.minHitArea).fluidPress(interaction, pressedScale = 0.90f, enabled = enabled).then(tap), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(size).surface(fill, Circle), contentAlignment = Alignment.Center) {
-            Glyph(icon, HoneycombColors.contentFor(fill), size * GLYPH_FRACTION)
-        }
+    Box(
+        modifier
+            .size(size)
+            .fluidPress(interaction, pressedScale = 0.90f, enabled = enabled)
+            .surface(fill, Circle)
+            .then(tap),
+        contentAlignment = Alignment.Center,
+    ) {
+        Glyph(icon, HoneycombColors.contentFor(fill), size * GLYPH_FRACTION)
     }
 }
 
-/** Crisp phone-proportioned label style for pill buttons (~16 real sp inside a ~46 real dp capsule). */
-private val CapsuleLabelStyle: TextStyle
-    @Composable get() = TextStyle(
+/** Tier-matched typography for [CapsuleButton] across compact (36dp), regular (42dp), and large (50dp) pills. */
+@Composable
+private fun capsuleLabelStyleFor(height: Dp, filled: Boolean): TextStyle {
+    val (sizeSp, lineSp, weight) = when {
+        height <= ButtonSize.compact -> Triple(13.sp, 17.sp, androidx.compose.ui.text.font.FontWeight.Medium)
+        height >= ButtonSize.large -> Triple(
+            15.sp,
+            20.sp,
+            if (filled) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Medium,
+        )
+        else -> Triple(14.sp, 18.sp, androidx.compose.ui.text.font.FontWeight.Medium)
+    }
+    return TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-        fontSize = 14.sp,
-        lineHeight = 18.sp,
+        fontWeight = weight,
+        fontSize = sizeSp,
+        lineHeight = lineSp,
         color = HoneycombColors.label,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
     )
+}
 
 /**
- * A tonal capsule (secondaryContainer) with crisp, balanced button typography (~16 real sp inside a ~46 real dp pill).
+ * Unified Material 3 Expressive capsule button: primary ([filled] = true, `accent`) for commit/done/primary CTAs,
+ * tonal ([filled] = false, `tonal`) for secondary/mode-switch actions, with automatic tier-scaled padding & type.
  */
 @Composable
 fun CapsuleButton(
@@ -242,17 +336,28 @@ fun CapsuleButton(
     on: Boolean? = null,
     tint: Color = HoneycombColors.accent,
     onLongClick: (() -> Unit)? = null,
-    height: Dp = 40.dp,
+    height: Dp = ButtonSize.regular,
     minWidth: Dp = 0.dp,
-    style: TextStyle = CapsuleLabelStyle,
-    iconSize: Dp = 16.dp,
-    sidePad: Dp = 18.dp,
+    style: TextStyle? = null,
+    iconSize: Dp = Dp.Unspecified,
+    sidePad: Dp = Dp.Unspecified,
     filled: Boolean = false,
 ) {
-    if (onClick == null) { Box(modifier.heightIn(min = ControlSize.minHitArea).height(height)); return }
+    if (onClick == null) { Box(modifier.height(height)); return }
+    val resolvedStyle = style ?: capsuleLabelStyleFor(height, filled || on == true)
+    val resolvedPad = if (sidePad != Dp.Unspecified) sidePad else when {
+        height <= ButtonSize.compact -> 14.dp
+        height >= ButtonSize.large -> 22.dp
+        else -> 20.dp
+    }
+    val resolvedIconSize = if (iconSize != Dp.Unspecified) iconSize else when {
+        height <= ButtonSize.compact -> 15.dp
+        height >= ButtonSize.large -> 19.dp
+        else -> 17.dp
+    }
     val interaction = remember { MutableInteractionSource() }
     BoxWithConstraints(
-        modifier.sizeIn(minWidth = ControlSize.minHitArea, minHeight = ControlSize.minHitArea)
+        modifier.sizeIn(minWidth = maxOf(minWidth, height), minHeight = height)
             .fluidPress(interaction, pressedScale = 0.94f)
             .tap(on, onClick, onLongClick, interaction),
         contentAlignment = Alignment.Center,
@@ -261,21 +366,19 @@ fun CapsuleButton(
         val fill = if (on == true || filled) tint else HoneycombColors.tonal
         val ink = HoneycombColors.contentFor(fill)
         androidx.compose.foundation.layout.Row(
-            width.height(height).surface(fill, Capsule).padding(horizontal = sidePad),
+            width.height(height).surface(fill, Capsule).padding(horizontal = resolvedPad),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         ) {
-            if (icon != null) Glyph(icon, ink, iconSize)
-            BasicText(text, style = style.copy(color = ink), maxLines = 1, softWrap = false)
+            if (icon != null) Glyph(icon, ink, resolvedIconSize)
+            BasicText(text, style = resolvedStyle.copy(color = ink), maxLines = 1, softWrap = false)
         }
     }
 }
 
 /**
- * A list row: a [Platter] holding a 28 wp tinted icon disc (or the [leading] image) and a body label, with an
- * optional [subtitle] and [trailing] controls. Settings rows sit on black, so they have no rim. Controls too wide to
- * sit beside the label go in [below], a line of their own under it inside the same platter, so the label keeps the
- * row's full width (three 44 wp controls beside it leave a 211 wp screen's label one letter).
+ * A list row: a [Platter] holding a 36 dp tinted icon disc (or the [leading] image) and a body label, with an
+ * optional [subtitle] and [trailing] controls. Tappable rows use tactile press physics.
  */
 @Composable
 fun Row(
@@ -289,11 +392,12 @@ fun Row(
     below: (@Composable RowScope.() -> Unit)? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
-    val tap = if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier
+    val rowShape = rounded(NativeShapes.largeIncreased)
+    val tap = if (onClick != null) Modifier.tactileClickable(onClick = onClick, pressedScale = 0.98f) else Modifier
     Column(
-        modifier.fillMaxWidth().heightIn(min = 52.dp).surface(HoneycombColors.platter, PlatterShape, rim = false)
-            .then(tap).padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier.fillMaxWidth().heightIn(min = 56.dp).surface(HoneycombColors.platter, rowShape, rim = false)
+            .clip(rowShape).then(tap).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         androidx.compose.foundation.layout.Row(
             Modifier.fillMaxWidth().heightIn(min = 28.dp),
@@ -452,7 +556,7 @@ fun ActionMenu(
                 Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
-                    .clickable(role = Role.Button, onClick = a.onClick)
+                    .tactileClickable(onClick = a.onClick, pressedScale = 0.97f, haptic = true)
                     .padding(horizontal = 18.dp, vertical = 12.dp)
                     .testTag(a.tag)
                     .semantics { contentDescription = a.label },
@@ -508,123 +612,6 @@ fun ActionMenuSheet(
             actions = actions,
             modifier = modifier.padding(start = 12.dp, end = 12.dp, bottom = 16.dp),
         )
-    }
-}
-
-/** Clean phone-proportioned settings card grouping per-app feature toggles (e.g. Instagram -> Reels, Explore, Feed). */
-@Composable
-fun SettingsGroup(
-    title: String,
-    badge: String? = null,
-    modifier: Modifier = Modifier,
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
-) {
-    val headerStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-        fontSize = 14.sp,
-        lineHeight = 18.sp,
-        color = HoneycombColors.label,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-    val badgeStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        color = HoneycombColors.secondaryLabel,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-    Column(
-        modifier
-            .fillMaxWidth()
-            .surface(HoneycombColors.platter, rounded(NativeShapes.largeIncreased), rim = false)
-            .padding(vertical = 4.dp),
-    ) {
-        androidx.compose.foundation.layout.Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            BasicText(title, style = headerStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (badge != null) BasicText(badge, style = badgeStyle, maxLines = 1)
-        }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(HoneycombColors.outline.copy(alpha = 0.14f)))
-        content()
-    }
-}
-
-/** One compact phone-proportioned toggle row inside a [SettingsGroup]. */
-@Composable
-fun ToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-    showDivider: Boolean = false,
-) {
-    val labelStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-        fontSize = 14.sp,
-        lineHeight = 18.sp,
-        color = HoneycombColors.label,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-    val subStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        color = HoneycombColors.secondaryLabel,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-    Column(modifier.fillMaxWidth()) {
-        if (showDivider) {
-            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(1.dp).background(HoneycombColors.outline.copy(alpha = 0.10f)))
-        }
-        androidx.compose.foundation.layout.Row(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = 52.dp)
-                .clickable(role = Role.Switch) { onCheckedChange(!checked) }
-                .semantics { toggleableState = ToggleableState(checked); contentDescription = "$title, ${if (checked) "on" else "off"}" }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                BasicText(title, style = labelStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                BasicText(subtitle, style = subStyle, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            NativeSwitch(checked = checked)
-        }
-    }
-}
-
-/** Crisp phone-proportioned page heading for settings screens. */
-@Composable
-fun SettingsHeader(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
-    val titleStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-        fontSize = 24.sp,
-        lineHeight = 29.sp,
-        color = HoneycombColors.label,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-    val subStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-        fontSize = 13.sp,
-        lineHeight = 18.sp,
-        color = HoneycombColors.secondaryLabel,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        BasicText(title, style = titleStyle)
-        if (subtitle != null) BasicText(subtitle, style = subStyle)
     }
 }
 
@@ -744,37 +731,6 @@ fun AppSearchBar(
     }
 }
 
-/** Tappable "Search apps" pill matching [AppSearchBar] for jumping straight into search from Dynamic Grid. */
-@Composable
-fun AppSearchTrigger(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val hintStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-        fontSize = 14.sp,
-        lineHeight = 18.sp,
-        color = HoneycombColors.secondaryLabel,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-    androidx.compose.foundation.layout.Row(
-        modifier
-            .fillMaxWidth()
-            .height(40.dp)
-            .surface(HoneycombColors.platter.copy(alpha = 0.90f), Capsule, rim = false)
-            .border(0.75.dp, HoneycombColors.outline.copy(alpha = 0.16f), Capsule)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp)
-            .semantics { contentDescription = "Search apps" },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Glyph(Symbols.search, HoneycombColors.secondaryLabel, 17.dp)
-        BasicText("Search apps", style = hintStyle, maxLines = 1)
-    }
-}
-
 /** Crisp phone-proportioned label style for All Apps list rows. */
 val AppRowLabelStyle: TextStyle
     @Composable get() = TextStyle(
@@ -827,8 +783,12 @@ fun NowPlayingCard(
         color = HoneycombColors.secondaryLabel,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
     )
+    val interaction = remember { MutableInteractionSource() }
     Platter(
-        modifier = modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onOpen),
+        modifier = modifier
+            .fillMaxWidth()
+            .fluidPress(interaction, pressedScale = 0.98f)
+            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onOpen),
         padding = 14.dp,
     ) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -840,7 +800,7 @@ fun NowPlayingCard(
                 Box(
                     Modifier
                         .size(56.dp)
-                        .clip(rounded(14.dp))
+                        .clip(rounded(NativeShapes.large))
                         .background(HoneycombColors.tonal),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -879,27 +839,27 @@ fun NowPlayingCard(
                     icon = Symbols.previous,
                     contentDescription = "Previous track",
                     onClick = onPrevious,
-                    size = 38.dp,
+                    size = ButtonSize.circleRegular,
                 )
                 CircleButton(
                     icon = if (playing) Symbols.pause else Symbols.play,
                     contentDescription = if (playing) "Pause" else "Play",
                     onClick = onPlayPause,
-                    size = 44.dp,
+                    size = ButtonSize.circleLarge,
                     tint = HoneycombColors.accent,
                 )
                 CircleButton(
                     icon = Symbols.next,
                     contentDescription = "Next track",
                     onClick = onNext,
-                    size = 38.dp,
+                    size = ButtonSize.circleRegular,
                 )
             }
         }
     }
 }
 
-/** Clean search-result row: circular app icon + crisp phone-proportioned app name. */
+/** Clean search-result row: circular app icon + crisp phone-proportioned app name + tactile spring press. */
 @Composable
 fun AppSearchRow(
     label: String,
@@ -920,7 +880,7 @@ fun AppSearchRow(
             .fillMaxWidth()
             .heightIn(min = 52.dp)
             .clip(rounded(NativeShapes.large))
-            .clickable(role = Role.Button, onClick = onClick)
+            .tactileClickable(onClick = onClick, pressedScale = 0.97f)
             .padding(horizontal = 12.dp, vertical = 7.dp)
             .semantics { contentDescription = label },
         verticalAlignment = Alignment.CenterVertically,
@@ -1086,50 +1046,6 @@ private fun Modifier.pointerInputScrubber(onScrub: (y: Float, height: Float, fin
         }
     }
 
-/** Native Material 3 SingleChoiceSegmentedButtonRow switcher (e.g. Feeds · Apps · Websites). */
-@Composable
-fun SegmentedTabs(
-    tabs: List<String>,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val activeStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-        fontSize = 13.sp,
-        lineHeight = 17.sp,
-        color = HoneycombColors.onAccent,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-    val inactiveStyle = activeStyle.copy(
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-        color = HoneycombColors.secondaryLabel,
-    )
-    SingleChoiceSegmentedButtonRow(modifier = modifier.fillMaxWidth()) {
-        tabs.forEachIndexed { idx, label ->
-            val selected = idx == selectedIndex
-            SegmentedButton(
-                selected = selected,
-                onClick = { onSelect(idx) },
-                shape = SegmentedButtonDefaults.itemShape(index = idx, count = tabs.size),
-                icon = {},
-                colors = SegmentedButtonDefaults.colors(
-                    activeContainerColor = HoneycombColors.accent,
-                    activeContentColor = HoneycombColors.onAccent,
-                    activeBorderColor = Color.Transparent,
-                    inactiveContainerColor = HoneycombColors.platter,
-                    inactiveContentColor = HoneycombColors.secondaryLabel,
-                    inactiveBorderColor = HoneycombColors.outline.copy(alpha = 0.25f),
-                ),
-                modifier = Modifier.semantics { contentDescription = label },
-            ) {
-                BasicText(label, style = if (selected) activeStyle else inactiveStyle, maxLines = 1)
-            }
-        }
-    }
-}
-
 /**
  * Native Android 16 Material 3 Expressive segmented settings card corner shape:
  * outer corners = 20 dp, inner corners between grouped rows = 4 dp, separated by 2 dp gaps.
@@ -1145,7 +1061,7 @@ fun settingsCardShape(index: Int, count: Int): RoundedCornerShape {
     }
 }
 
-/** Native Android 16 Material 3 Settings top app bar: borderless `←` arrow on sub-pages, clean title, optional action. */
+/** Native Android 16 Material 3 Settings top app bar: tactile `←` back button on sub-pages, clean title, optional compact pill action. */
 @Composable
 fun MinimalScreenHeader(
     title: String,
@@ -1153,12 +1069,15 @@ fun MinimalScreenHeader(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    backTag: String? = null,
+    actionTag: String? = null,
 ) {
     val titleStyle = TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-        fontSize = if (onBack != null) 22.sp else 28.sp,
-        lineHeight = if (onBack != null) 28.sp else 34.sp,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+        fontSize = if (onBack != null) 22.sp else 26.sp,
+        lineHeight = if (onBack != null) 28.sp else 32.sp,
+        letterSpacing = (-0.2).sp,
         color = HoneycombColors.label,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
     )
@@ -1166,25 +1085,22 @@ fun MinimalScreenHeader(
         modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .padding(top = if (onBack == null) 8.dp else 0.dp, bottom = 4.dp),
+            .padding(top = if (onBack == null) 8.dp else 2.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (onBack != null) {
-            Box(
-                Modifier
-                    .size(44.dp)
-                    .clip(Circle)
-                    .clickable(role = Role.Button, onClick = onBack)
-                    .semantics { contentDescription = "Back" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Glyph(Symbols.arrowBack, HoneycombColors.label, 24.dp)
-            }
+            CircleButton(
+                icon = Symbols.arrowBack,
+                contentDescription = "Back",
+                onClick = onBack,
+                size = ButtonSize.circleRegular,
+                modifier = if (backTag != null) Modifier.testTag(backTag) else Modifier,
+            )
         }
         BasicText(
             title,
-            Modifier.weight(1f).padding(start = if (onBack != null) 4.dp else 4.dp),
+            Modifier.weight(1f).padding(start = 4.dp),
             style = titleStyle,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1193,9 +1109,9 @@ fun MinimalScreenHeader(
             CapsuleButton(
                 text = actionLabel,
                 onClick = onAction,
-                height = 36.dp,
-                sidePad = 16.dp,
+                height = ButtonSize.compact,
                 filled = true,
+                modifier = if (actionTag != null) Modifier.testTag(actionTag) else Modifier,
             )
         }
     }
@@ -1206,7 +1122,7 @@ fun MinimalScreenHeader(
 fun SectionKicker(text: String, modifier: Modifier = Modifier) {
     val style = TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
         fontSize = 13.sp,
         lineHeight = 18.sp,
         color = HoneycombColors.accent,
@@ -1330,8 +1246,8 @@ private fun SettingsSwitch(checked: Boolean, modifier: Modifier = Modifier) {
 
 /**
  * Native Android 16 Material 3 Settings preference row:
- * Own segmented surface card (20dp outer / 4dp inner corners), clean leading 24dp glyph (no badge box) or 34dp app icon,
- * 16sp title + 13sp secondary summary line below, and optional overlapping mini app icons on the right.
+ * Own segmented surface card (20dp outer / 4dp inner corners), tactile press physics, clean leading glyph or 34dp app icon,
+ * 16sp title + 13sp summary line (accent-highlighted when [accentActive]), optional overlapping mini app icons, and chevron.
  */
 @Composable
 fun NavSummaryRow(
@@ -1346,10 +1262,11 @@ fun NavSummaryRow(
     monogram: String? = null,
     previewIcons: List<androidx.compose.ui.graphics.ImageBitmap> = emptyList(),
     accentActive: Boolean = false,
+    showChevron: Boolean = true,
 ) {
     val labelStyle = TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 22.sp,
         color = HoneycombColors.label,
@@ -1357,10 +1274,10 @@ fun NavSummaryRow(
     )
     val subStyle = TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontWeight = if (accentActive) androidx.compose.ui.text.font.FontWeight.Medium else androidx.compose.ui.text.font.FontWeight.Normal,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-        color = HoneycombColors.secondaryLabel,
+        color = if (accentActive) HoneycombColors.accent else HoneycombColors.secondaryLabel,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
     )
     val monogramStyle = TextStyle(
@@ -1377,7 +1294,7 @@ fun NavSummaryRow(
             .fillMaxWidth()
             .surface(HoneycombColors.platter, shape, rim = false)
             .clip(shape)
-            .clickable(role = Role.Button, onClick = onClick)
+            .tactileClickable(onClick = onClick, pressedScale = 0.98f)
             .heightIn(min = 64.dp)
             .padding(horizontal = 18.dp, vertical = 12.dp)
             .semantics { contentDescription = if (valueText.isEmpty()) title else "$title, $valueText" },
@@ -1418,6 +1335,9 @@ fun NavSummaryRow(
                 }
             }
         }
+        if (showChevron) {
+            Glyph(Symbols.chevronRight, HoneycombColors.secondaryLabel, 20.dp)
+        }
     }
 }
 
@@ -1439,7 +1359,7 @@ fun TwoTargetSwitchRow(
 ) {
     val labelStyle = TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 22.sp,
         color = HoneycombColors.label,
@@ -1450,7 +1370,7 @@ fun TwoTargetSwitchRow(
         fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-        color = HoneycombColors.secondaryLabel,
+        color = if (checked) HoneycombColors.accent else HoneycombColors.secondaryLabel,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
     )
     val shape = settingsCardShape(index, count)
@@ -1465,7 +1385,7 @@ fun TwoTargetSwitchRow(
         androidx.compose.foundation.layout.Row(
             Modifier
                 .weight(1f)
-                .clickable(role = Role.Button, onClick = onClick)
+                .tactileClickable(onClick = onClick, pressedScale = 0.98f)
                 .padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
                 .semantics { contentDescription = "$title, $subtitle" },
             verticalAlignment = Alignment.CenterVertically,
@@ -1486,7 +1406,7 @@ fun TwoTargetSwitchRow(
         Box(Modifier.size(1.dp, 28.dp).background(HoneycombColors.outline.copy(alpha = 0.24f)))
         Box(
             Modifier
-                .clickable(role = Role.Switch) { onCheckedChange(!checked) }
+                .tactileClickable(onClick = { onCheckedChange(!checked) }, pressedScale = 0.92f, role = Role.Switch, haptic = true)
                 .semantics {
                     toggleableState = ToggleableState(checked)
                     contentDescription = "Toggle $title, ${if (checked) "on" else "off"}"
@@ -1499,7 +1419,7 @@ fun TwoTargetSwitchRow(
     }
 }
 
-/** Native Android 16 Material 3 Settings switch row inside a segmented card group. */
+/** Native Android 16 Material 3 Settings switch row inside a segmented card group with tactile spring press & haptics. */
 @Composable
 fun CleanSwitchRow(
     title: String,
@@ -1515,7 +1435,7 @@ fun CleanSwitchRow(
 ) {
     val labelStyle = TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 22.sp,
         color = HoneycombColors.label,
@@ -1523,10 +1443,10 @@ fun CleanSwitchRow(
     )
     val subStyle = TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontWeight = if (checked) androidx.compose.ui.text.font.FontWeight.Medium else androidx.compose.ui.text.font.FontWeight.Normal,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-        color = HoneycombColors.secondaryLabel,
+        color = if (checked) HoneycombColors.accent else HoneycombColors.secondaryLabel,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
     )
     val monogramStyle = TextStyle(
@@ -1543,7 +1463,7 @@ fun CleanSwitchRow(
             .fillMaxWidth()
             .surface(HoneycombColors.platter, shape, rim = false)
             .clip(shape)
-            .clickable(role = Role.Switch) { onCheckedChange(!checked) }
+            .tactileClickable(onClick = { onCheckedChange(!checked) }, pressedScale = 0.98f, role = Role.Switch, haptic = true)
             .semantics { toggleableState = ToggleableState(checked); contentDescription = "$title, ${if (checked) "on" else "off"}" }
             .heightIn(min = if (subtitle.isNullOrEmpty()) 58.dp else 64.dp)
             .padding(horizontal = 18.dp, vertical = 12.dp),
@@ -1569,6 +1489,58 @@ fun CleanSwitchRow(
             }
         }
         SettingsSwitch(checked = checked)
+    }
+}
+
+/** Segmented single-choice row (e.g. Quiet call policy) with tactile press and trailing accent check mark. */
+@Composable
+fun CleanChoiceRow(
+    title: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    index: Int = 0,
+    count: Int = 1,
+) {
+    val labelStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
+        color = HoneycombColors.label,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+    val subStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        color = HoneycombColors.secondaryLabel,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+    val shape = settingsCardShape(index, count)
+    androidx.compose.foundation.layout.Row(
+        modifier
+            .fillMaxWidth()
+            .surface(HoneycombColors.platter, shape, rim = false)
+            .clip(shape)
+            .tactileClickable(onClick = onClick, pressedScale = 0.98f, role = Role.RadioButton, haptic = true)
+            .semantics { contentDescription = if (selected) "$title, selected" else title }
+            .heightIn(min = 58.dp)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            BasicText(title, style = labelStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!subtitle.isNullOrEmpty()) {
+                BasicText(subtitle, style = subStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (selected) {
+            Glyph(Symbols.check, HoneycombColors.accent, 22.dp)
+        }
     }
 }
 
@@ -1598,8 +1570,8 @@ fun WebsiteInputBar(
         androidx.compose.foundation.layout.Row(
             Modifier
                 .weight(1f)
-                .height(48.dp)
-                .surface(HoneycombColors.platter, rounded(24.dp), rim = false)
+                .height(ButtonSize.large)
+                .surface(HoneycombColors.platter, Capsule, rim = false)
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1627,14 +1599,13 @@ fun WebsiteInputBar(
         CapsuleButton(
             text = "Add",
             onClick = onAdd,
-            height = 48.dp,
-            sidePad = 18.dp,
+            height = ButtonSize.large,
             filled = value.isNotBlank(),
         )
     }
 }
 
-/** Android 16 Material 3 segmented row for a user-added blocked website domain with a clean remove action. */
+/** Android 16 Material 3 segmented row for a user-added blocked website domain with a tactile remove button. */
 @Composable
 fun BlockedDomainRow(
     domain: String,
@@ -1646,7 +1617,7 @@ fun BlockedDomainRow(
 ) {
     val domainStyle = TextStyle(
         fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 22.sp,
         color = HoneycombColors.label,
@@ -1667,7 +1638,7 @@ fun BlockedDomainRow(
             .surface(HoneycombColors.platter, shape, rim = false)
             .clip(shape)
             .heightIn(min = 58.dp)
-            .padding(start = 18.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            .padding(start = 18.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -1680,15 +1651,193 @@ fun BlockedDomainRow(
                 BasicText(subtitle, style = subStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+        CircleButton(
+            icon = Symbols.close,
+            contentDescription = "Remove $domain",
+            onClick = onRemove,
+            size = ButtonSize.circleSmall,
+        )
+    }
+}
+
+/**
+ * Opal-inspired mindful breathing visualizer for the pre-open pause screen:
+ * pure obsidian ground, a whisper-soft atmospheric aura that fades seamlessly to transparent (never a hard bright ball),
+ * three delicate concentric hairline breathing rings with staggered organic motion, a precision circular countdown arc,
+ * and a dark glass center medallion holding the paused app's icon.
+ */
+@Composable
+fun MindfulBreathOrb(
+    progress: Float,
+    breath: Float,
+    accentColors: List<Color>,
+    appIcon: androidx.compose.ui.graphics.ImageBitmap?,
+    label: String,
+    phaseTitle: String,
+    phaseSubtitle: String,
+    modifier: Modifier = Modifier,
+) {
+    val primaryTint = accentColors.getOrElse(1) { HoneycombColors.accent }
+    val glowTint = accentColors.firstOrNull() ?: HoneycombColors.accent
+    val trackColor = HoneycombColors.label.copy(alpha = 0.12f)
+    val rimColor = HoneycombColors.label.copy(alpha = 0.14f)
+    val coreFill = HoneycombColors.platter
+    val titleStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+        fontSize = 24.sp,
+        lineHeight = 30.sp,
+        letterSpacing = (-0.4).sp,
+        color = HoneycombColors.label,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+    val subStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+        fontSize = 15.sp,
+        lineHeight = 20.sp,
+        color = HoneycombColors.secondaryLabel,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+    val pillStyle = TextStyle(
+        fontFamily = NativeFont,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        fontSize = 13.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.2.sp,
+        color = HoneycombColors.secondaryLabel,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+    )
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
+    ) {
+        // Subtle Opal-style app pill at top of the visualizer
         Box(
             Modifier
-                .size(44.dp)
-                .clip(Circle)
-                .clickable(role = Role.Button, onClick = onRemove)
-                .semantics { contentDescription = "Remove $domain" },
+                .surface(HoneycombColors.platter, Capsule, rim = false)
+                .border(1.dp, rimColor, Capsule)
+                .padding(horizontal = 14.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Glyph(Symbols.close, HoneycombColors.secondaryLabel, 20.dp)
+            BasicText(label, style = pillStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+
+        // Ambient breathing halo + concentric hairline rings + precision sweep arc + obsidian medallion
+        Box(Modifier.size(280.dp), contentAlignment = Alignment.Center) {
+            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+                val maxR = size.minDimension / 2f
+                val b = breath.coerceIn(0f, 1f)
+
+                // 1. Whisper-soft atmospheric glow fading completely to transparent (zero hard circle edge)
+                val auraR = maxR * (0.76f + 0.24f * b)
+                drawCircle(
+                    brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                        colorStops = arrayOf(
+                            0.00f to glowTint.copy(alpha = 0.16f + 0.08f * b),
+                            0.42f to primaryTint.copy(alpha = 0.07f + 0.04f * b),
+                            0.78f to primaryTint.copy(alpha = 0.02f),
+                            1.00f to Color.Transparent,
+                        ),
+                        center = center,
+                        radius = auraR,
+                    ),
+                    radius = auraR,
+                    center = center,
+                )
+
+                // 2. Three delicate concentric hairline breathing ripples
+                val ring1R = maxR * (0.64f + 0.14f * b)
+                val ring2R = maxR * (0.76f + 0.16f * b)
+                val ring3R = maxR * (0.88f + 0.11f * b)
+                drawCircle(
+                    color = primaryTint.copy(alpha = 0.24f + 0.14f * b),
+                    radius = ring1R,
+                    center = center,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.25.dp.toPx()),
+                )
+                drawCircle(
+                    color = primaryTint.copy(alpha = 0.13f + 0.08f * b),
+                    radius = ring2R,
+                    center = center,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()),
+                )
+                drawCircle(
+                    color = glowTint.copy(alpha = 0.06f + 0.05f * b),
+                    radius = ring3R,
+                    center = center,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 0.85.dp.toPx()),
+                )
+
+                // 3. Precision circular progress ring around the center medallion
+                val arcR = 66.dp.toPx()
+                val arcStroke = 2.25.dp.toPx()
+                val topLeft = androidx.compose.ui.geometry.Offset(center.x - arcR, center.y - arcR)
+                val arcSize = androidx.compose.ui.geometry.Size(arcR * 2f, arcR * 2f)
+                drawArc(
+                    color = trackColor,
+                    startAngle = -90f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = arcStroke),
+                )
+                val sweep = (progress.coerceIn(0f, 1f)) * 360f
+                if (sweep > 0.5f) {
+                    drawArc(
+                        brush = androidx.compose.ui.graphics.Brush.sweepGradient(
+                            colors = listOf(glowTint, primaryTint, glowTint),
+                            center = center,
+                        ),
+                        startAngle = -90f,
+                        sweepAngle = sweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = arcStroke,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
+                    )
+                }
+            }
+
+            // 4. Dark obsidian glass medallion holding the app's icon cleanly (never a bright filled disc)
+            Box(
+                Modifier
+                    .size(104.dp)
+                    .clip(Circle)
+                    .background(coreFill)
+                    .border(1.dp, rimColor, Circle),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (appIcon != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = appIcon,
+                        contentDescription = label,
+                        modifier = Modifier.size(56.dp).clip(Circle),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    )
+                } else {
+                    Glyph(Symbols.block, HoneycombColors.label, 34.dp)
+                }
+            }
+        }
+
+        // Calm Opal-style breathing guidance directly under the orb
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(horizontal = 24.dp),
+        ) {
+            BasicText(phaseTitle, style = titleStyle)
+            BasicText(phaseSubtitle, style = subStyle)
         }
     }
 }
