@@ -4,62 +4,35 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Subtle shadow under sculpted outer target ring -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#A6000000"
-        android:strokeWidth="8.4"
-        android:pathData="M54,33.1a22.5,22.5 0,1 0,0.01 0z" />
-    <!-- Sculpted machined satin outer target ring -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeWidth="8.2"
-        android:pathData="M54,31.5a22.5,22.5 0,1 0,0.01 0z">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:type="linear"
-                android:startX="38"
-                android:startY="24"
-                android:endX="72"
-                android:endY="82">
-                <item android:offset="0.0" android:color="#FFFFFFFF" />
-                <item android:offset="0.48" android:color="#FFDCDCE2" />
-                <item android:offset="1.0" android:color="#FF9494A0" />
-            </gradient>
-        </aapt:attr>
-    </path>
-    <!-- Subtle recessed inner bezel hairline -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeWidth="0.9"
-        android:pathData="M54,39.5a14.5,14.5 0,1 0,0.01 0z">
-        <aapt:attr name="android:strokeColor">
-            <gradient
-                android:type="linear"
-                android:startX="54"
-                android:startY="39"
-                android:endX="54"
-                android:endY="69">
-                <item android:offset="0.0" android:color="#59FFFFFF" />
-                <item android:offset="1.0" android:color="#0AFFFFFF" />
-            </gradient>
-        </aapt:attr>
-    </path>
-    <!-- Drop shadow under center bullseye sphere -->
-    <path
-        android:fillColor="#99000000"
-        android:pathData="M54,46.1a9.2,9.2 0,1 0,0.01 0z" />
-    <!-- Sculpted pearl-white center bullseye -->
-    <path android:pathData="M54,44.8a9.2,9.2 0,1 0,0.01 0z">
+    <!-- Clean obsidian black middle ring (r=24.5, exact 2/3 of the 36-unit adaptive circle radius) -->
+    <path android:pathData="M54,29.5a24.5,24.5 0,1 0,0.01 0z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:type="radial"
-                android:centerX="51.6"
-                android:centerY="50.8"
-                android:gradientRadius="12">
+                android:centerX="54"
+                android:centerY="43"
+                android:gradientRadius="36">
+                <item android:offset="0.0" android:color="#FF222226" />
+                <item android:offset="0.65" android:color="#FF0D0D10" />
+                <item android:offset="1.0" android:color="#FF050507" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Soft drop shadow beneath center bullseye -->
+    <path
+        android:fillColor="#8C000000"
+        android:pathData="M54,43.0a12.2,12.2 0,1 0,0.01 0z" />
+    <!-- Sculpted pearl-white center bullseye (r=12.2, exact 1/3 of the 36-unit adaptive circle radius) -->
+    <path android:pathData="M54,41.8a12.2,12.2 0,1 0,0.01 0z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="51.1"
+                android:centerY="49.1"
+                android:gradientRadius="17">
                 <item android:offset="0.0" android:color="#FFFFFFFF" />
-                <item android:offset="0.65" android:color="#FFE4E4EA" />
-                <item android:offset="1.0" android:color="#FF9A9AA6" />
+                <item android:offset="0.60" android:color="#FFEAEAEF" />
+                <item android:offset="1.0" android:color="#FFB0B0BC" />
             </gradient>
         </aapt:attr>
     </path>
