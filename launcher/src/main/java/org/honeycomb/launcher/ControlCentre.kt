@@ -130,7 +130,10 @@ object Quiet {
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun granted(ctx: Context) = nm(ctx).isNotificationPolicyAccessGranted
-    fun isOn(ctx: Context) = nm(ctx).currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_PRIORITY
+    fun isOn(ctx: Context): Boolean {
+        val f = nm(ctx).currentInterruptionFilter
+        return f != NotificationManager.INTERRUPTION_FILTER_ALL && f != NotificationManager.INTERRUPTION_FILTER_UNKNOWN
+    }
 
     fun callMode(ctx: Context): CallMode {
         val p = prefs(ctx)
@@ -239,16 +242,20 @@ data class Toggles(
     val rotationLock: Boolean = false,
     /** Charging (BatteryManager.isCharging): the battery capsule shows the bolt. */
     val charging: Boolean = false,
+    /** Battery Saver / Low Power Mode (PowerManager.isPowerSaveMode). */
+    val powerSave: Boolean = false,
 )
 
 object Device {
     fun read(ctx: Context, torch: Boolean): Toggles {
         val audio = ctx.getSystemService(AudioManager::class.java)
+        val bm = ctx.getSystemService(android.os.BatteryManager::class.java)
+        val pm = ctx.getSystemService(android.os.PowerManager::class.java)
         return Toggles(
             wifi = runCatching { ctx.getSystemService(android.net.wifi.WifiManager::class.java).isWifiEnabled }.getOrDefault(false),
             bluetooth = runCatching { ctx.getSystemService(android.bluetooth.BluetoothManager::class.java).adapter?.isEnabled == true }.getOrDefault(false),
             quiet = Quiet.isOn(ctx),
-            silent = audio.ringerMode == AudioManager.RINGER_MODE_SILENT,
+            silent = audio.ringerMode != AudioManager.RINGER_MODE_NORMAL,
             airplane = Settings.Global.getInt(ctx.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) == 1,
             torch = torch,
             // no public API reads the hotspot; WifiManager.isWifiApEnabled is hidden, so this is off where it is blocked
@@ -256,9 +263,10 @@ object Device {
                 val wm = ctx.getSystemService(android.net.wifi.WifiManager::class.java)
                 wm.javaClass.getMethod("isWifiApEnabled").invoke(wm) as Boolean
             }.getOrDefault(false),
-            battery = ctx.getSystemService(android.os.BatteryManager::class.java).getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY),
+            battery = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY),
             rotationLock = Settings.System.getInt(ctx.contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1) == 0,
-            charging = ctx.getSystemService(android.os.BatteryManager::class.java).isCharging,
+            charging = bm.isCharging,
+            powerSave = runCatching { pm.isPowerSaveMode }.getOrDefault(false),
         )
     }
 
@@ -291,8 +299,10 @@ object Device {
     fun launch(ctx: Context, intent: Intent): Boolean =
         runCatching { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
 
-    /** The timer: the clock app's timers (AlarmClock.ACTION_SHOW_TIMERS). */
-    fun openTimer(ctx: Context) = launch(ctx, Intent(android.provider.AlarmClock.ACTION_SHOW_TIMERS))
+    /** The timer: the clock app's timers (AlarmClock.ACTION_SHOW_TIMERS), with fallback to ACTION_SET_TIMER. */
+    fun openTimer(ctx: Context) =
+        launch(ctx, Intent(android.provider.AlarmClock.ACTION_SHOW_TIMERS)) ||
+            launch(ctx, Intent(android.provider.AlarmClock.ACTION_SET_TIMER))
 
     /** The calculator: whichever app declares CATEGORY_APP_CALCULATOR, found through a selector intent. */
     fun openCalculator(ctx: Context) = launch(ctx, Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALCULATOR))
@@ -355,6 +365,7 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
     val ctx = LocalContext.current
     val view = LocalView.current
     var brightness by remember { mutableStateOf(Levels.brightness(ctx)) }
+    var lastBrightnessAskMs by remember { mutableStateOf(0L) }
     var activeIds by remember { mutableStateOf(ControlPrefs.load(ctx)) }
     var editing by remember { mutableStateOf(false) }
     var showAddSheet by remember { mutableStateOf(false) }
@@ -455,13 +466,17 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                                     if (Levels.canWriteBrightness(ctx)) {
                                         Levels.setBrightness(ctx, next)
                                     } else {
-                                        Device.launch(
-                                            ctx,
-                                            Intent(
-                                                Settings.ACTION_MANAGE_WRITE_SETTINGS,
-                                                android.net.Uri.fromParts("package", ctx.packageName, null),
-                                            ),
-                                        )
+                                        val nowMs = android.os.SystemClock.uptimeMillis()
+                                        if (nowMs - lastBrightnessAskMs > 1500L) {
+                                            lastBrightnessAskMs = nowMs
+                                            Device.launch(
+                                                ctx,
+                                                Intent(
+                                                    Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                                    android.net.Uri.fromParts("package", ctx.packageName, null),
+                                                ),
+                                            )
+                                        }
                                     }
                                 },
                                 icon = Symbols.sun,
@@ -673,33 +688,39 @@ private fun Control(id: String, t: Toggles, m: Modifier, pt: androidx.compose.ui
             m.testTag("tile-wifi"), on = t.wifi)
         "airplane" -> WatchButton(Symbols.airplane, said("Airplane mode", t.airplane), act { Device.open(ctx, Settings.ACTION_AIRPLANE_MODE_SETTINGS) },
             m.testTag("tile-airplane"), on = t.airplane)
-        "battery" -> WatchButton(Symbols.batteryFull, "Battery, ${t.battery} percent", { Device.openBattery(ctx) }, m.testTag("tile-battery"),
-            label = "${t.battery}%")
+        "battery" -> WatchButton(
+            Symbols.batteryFull,
+            "Battery, ${t.battery} percent" + if (t.powerSave) ", Battery Saver on" else "",
+            act { Device.openBattery(ctx) },
+            m.testTag("tile-battery"),
+            on = t.powerSave || t.battery <= 20,
+            tint = if (t.battery <= 20) HoneycombColors.error else HoneycombColors.accent,
+            label = "${t.battery}%",
+        )
         "silent" -> WatchButton(if (t.silent) Symbols.bellSlash else Symbols.bell, said("Silent", t.silent), act { Device.setSilent(ctx, !t.silent) },
             m.testTag("tile-silent"), on = t.silent)
-        // the watch's flashlight fills white when on, its glyph dark: the dark glyph is drawn over the button's own
-        "flashlight" -> Box(m, contentAlignment = Alignment.Center) {
-            WatchButton(if (t.torch) Symbols.flashlightOn else Symbols.flashlightOff, said("Flashlight", t.torch),
-                act { Device.setTorch(ctx, !t.torch) }, Modifier.fillMaxSize().testTag("tile-flashlight"), on = t.torch)
-            if (t.torch) Glyph(Symbols.flashlightOn, HoneycombColors.onAccent, FLASHLIGHT_GLYPH.wp)
-        }
+        "flashlight" -> WatchButton(if (t.torch) Symbols.flashlightOn else Symbols.flashlightOff, said("Flashlight", t.torch),
+            act { Device.setTorch(ctx, !t.torch) }, m.testTag("tile-flashlight"), on = t.torch)
         "quiet" -> WatchButton(Symbols.moon, said("Quiet", t.quiet), act { Quiet.set(ctx, !t.quiet) }, m.testTag("tile-quiet"),
             on = t.quiet, onLongClick = onHoldQuiet)
         "rotation" -> WatchButton(Symbols.rotationLock, said("Rotation lock", t.rotationLock), act { Device.setRotationLock(ctx, !t.rotationLock) },
             m.testTag("tile-rotation"), on = t.rotationLock)
-        "volume" -> WatchButton(Symbols.volume, "Volume", { Device.openVolume(ctx) }, m.testTag("tile-volume"))
-        "output" -> WatchButton(Symbols.output, "Audio output", { openOutput(ctx) }, m.testTag("tile-output"))
-        "brightness" -> WatchButton(Symbols.sun, "Brightness", { Levels.openBrightness(ctx) }, m.testTag("tile-brightness"))
-        "timer" -> WatchButton(Symbols.timer, "Timer", { Device.openTimer(ctx) }, m.testTag("tile-timer"))
-        "calculator" -> WatchButton(Symbols.calculator, "Calculator", { Device.openCalculator(ctx) }, m.testTag("tile-calculator"))
-        "camera" -> WatchButton(Symbols.camera, "Camera", { Device.openCamera(ctx) }, m.testTag("tile-camera"))
-        "mirroring" -> WatchButton(Symbols.mirroring, "Screen mirroring", { Device.openMirroring(ctx) }, m.testTag("tile-mirroring"))
+        "volume" -> WatchButton(Symbols.volume, "Volume", act { Device.openVolume(ctx) }, m.testTag("tile-volume"))
+        "output" -> WatchButton(Symbols.output, "Audio output", act { openOutput(ctx) }, m.testTag("tile-output"))
+        "brightness" -> WatchButton(Symbols.sun, "Brightness", act { Levels.openBrightness(ctx) }, m.testTag("tile-brightness"))
+        "timer" -> WatchButton(Symbols.timer, "Timer", act { Device.openTimer(ctx) }, m.testTag("tile-timer"))
+        "calculator" -> WatchButton(Symbols.calculator, "Calculator", act { Device.openCalculator(ctx) }, m.testTag("tile-calculator"))
+        "camera" -> WatchButton(Symbols.camera, "Camera", act { Device.openCamera(ctx) }, m.testTag("tile-camera"))
+        "mirroring" -> WatchButton(Symbols.mirroring, "Screen mirroring", act { Device.openMirroring(ctx) }, m.testTag("tile-mirroring"))
         "hotspot" -> WatchButton(Symbols.hotspot, said("Hotspot", t.hotspot),
             act { Device.open(ctx, "android.settings.TETHER_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS) },
             m.testTag("tile-hotspot"), on = t.hotspot)
-        "block" -> WatchButton(Symbols.block, "Block",
-            act { ctx.startActivity(Intent(ctx, FeedsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
-            m.testTag("tile-block"))
+        "block" -> {
+            val guardOn = FeedGuard.enabled(ctx)
+            WatchButton(Symbols.block, said("Block", guardOn),
+                act { ctx.startActivity(Intent(ctx, FeedsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
+                m.testTag("tile-block"), on = guardOn)
+        }
         "settings" -> WatchButton(Symbols.settings, "Honeycomb Settings",
             act { ctx.startActivity(Intent(ctx, HoneycombSettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
             m.testTag("tile-settings"))

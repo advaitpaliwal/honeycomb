@@ -166,7 +166,17 @@ fun WatchButton(
             .tap(on, onClick, onLongClick, interaction).semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        if (label != null) BasicText(label, style = HoneycombType.title.copy(color = ink), maxLines = 1)
+        if (label != null) BasicText(
+            label,
+            style = HoneycombType.title.copy(
+                color = ink,
+                fontSize = 28.sp,
+                lineHeight = 32.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                letterSpacing = (-0.5).sp,
+            ),
+            maxLines = 1,
+        )
         else Glyph(icon, ink, 26.wp)
     }
 }
