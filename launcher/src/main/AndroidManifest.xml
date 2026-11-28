@@ -8,6 +8,7 @@
     <!-- Control Centre: Quiet sets Do Not Disturb (notification-policy access); the tiles read Wi-Fi and Bluetooth -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Control Centre's brightness slider writes Settings.System.SCREEN_BRIGHTNESS, once granted in setup (ACTION_MANAGE_WRITE_SETTINGS) -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <!-- In-app updates from GitHub Releases (AppUpdater.kt): checks releases/latest and installs signed APKs -->

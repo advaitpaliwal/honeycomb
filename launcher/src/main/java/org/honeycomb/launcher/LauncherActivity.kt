@@ -170,7 +170,14 @@ class LauncherActivity : ComponentActivity() {
                     val prevShownRef = remember { arrayOf(emptyList<String>()) }
                     val shownPins = remember(pins, keys, ranking, hidden) {
                         AppOrder.favouritesStable(pins, keys, ranking, prevShownRef[0], { labels[it].orEmpty() }, hidden)
-                            .also { prevShownRef[0] = it }
+                            .also {
+                                prevShownRef[0] = it
+                                // Track currently shown unpinned dynamic packages for passive-negative impression learning
+                                lastShownDynamicPkgs = it.mapIndexedNotNull { idx, key ->
+                                    if (key.isEmpty() || pins.getOrNull(idx).orEmpty().isNotEmpty()) null
+                                    else ComponentName.unflattenFromString(key)?.packageName
+                                }
+                            }
                     }
                     fun savePins(next: List<String>) {
                         pins = AppOrder.pinned(pins, shownPins, next); AppOrder.savePins(this@LauncherActivity, pins)
@@ -467,6 +474,7 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private var inFront = false
+    private var lastShownDynamicPkgs: List<String> = emptyList()
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
@@ -508,7 +516,7 @@ class LauncherActivity : ComponentActivity() {
             runCatching { startActivity(app) }.isSuccess
         if (started) {
             launched = component
-            recordLaunch(this, component)
+            recordLaunch(this, component, lastShownDynamicPkgs)
         }
     }
 }

@@ -27,6 +27,19 @@ class MediaListener : NotificationListenerService() {
     override fun onListenerDisconnected() { if (Defaults.live === this) Defaults.live = null; Defaults.changes.value++ }
     override fun onNotificationPosted(sbn: android.service.notification.StatusBarNotification?) { Defaults.posted.value++ }
     override fun onNotificationRemoved(sbn: android.service.notification.StatusBarNotification?) { Defaults.posted.value++ }
+    override fun onNotificationRemoved(
+        sbn: android.service.notification.StatusBarNotification?,
+        rankingMap: RankingMap?,
+        reason: Int,
+    ) {
+        Defaults.posted.value++
+        val pkg = sbn?.packageName ?: return
+        if (pkg == packageName) return
+        when (reason) {
+            REASON_CLICK -> runCatching { recordNotifOutcome(applicationContext, pkg, opened = true) }
+            REASON_CANCEL, REASON_CANCEL_ALL -> runCatching { recordNotifOutcome(applicationContext, pkg, opened = false) }
+        }
+    }
 
     object Defaults {
         @Volatile var live: MediaListener? = null

@@ -163,4 +163,84 @@ class ContextualRankTest {
         val afterBurst = AppOrder.favouritesStable(saved, installed, burstRanking, prevShown, label, hysteresis = 1.20)
         assertEquals(listOf("a/.A", "b/.B", "c/.C", "d/.D", "e/.E", "f/.F", "h/.H"), afterBurst)
     }
+
+    @Test fun quickPriceShoppingBouncesAndArrivingHomeFlushCompetingRideAppsAutomatically() {
+        val now = ts(2026, 11, 28, 6, 50)
+        val arrivedHomeAt = now - 3 * 60_000L // stepped onto Home Wi-Fi 3 min ago
+        val events = buildList {
+            // Steady home habit: Messages & Chrome used daily at home
+            for (d in 1..4) {
+                add(LaunchEvent("com.google.android.apps.messaging", now - d * 24 * 3600_000L, dwellMs = 90_000L))
+                add(LaunchEvent("com.android.chrome", now - d * 24 * 3600_000L, dwellMs = 120_000L))
+            }
+            // 15 minutes ago outside on cellular: quick 6-8s price-shopping bounces across 3 apps
+            add(LaunchEvent("com.ubercab", now - 16 * 60_000L, dwellMs = 6_000L))
+            add(LaunchEvent("me.lyft.android", now - 15 * 60_000L, dwellMs = 5_000L))
+            add(LaunchEvent("com.waymo.carapp", now - 14 * 60_000L, dwellMs = 7_000L))
+            // Committed session in Robotaxi (90s)
+            add(LaunchEvent("com.tesla.riders", now - 13 * 60_000L, dwellMs = 90_000L))
+        }
+        val rankedAtHome = rankContextualPackages(
+            events = events,
+            fallbackCounts = emptyMap(),
+            contextCounts = emptyMap(),
+            nowMs = now,
+            ctx = DeviceContext(onWifi = true, networkId = "w_home123", networkChangedAtMs = arrivedHomeAt),
+            activeNotifications = emptyList(),
+            selfPkg = "org.honeycomb.launcher",
+            zoneId = utc,
+        )
+        // Zero hardcoding: committed Robotaxi outranks bounced Uber/Lyft/Waymo, AND steady home apps beat pre-arrival bounces!
+        val msgScore = rankedAtHome.scores["com.google.android.apps.messaging"] ?: 0.0
+        val uberScore = rankedAtHome.scores["com.ubercab"] ?: 0.0
+        val lyftScore = rankedAtHome.scores["me.lyft.android"] ?: 0.0
+        val waymoScore = rankedAtHome.scores["com.waymo.carapp"] ?: 0.0
+        val robotaxiScore = rankedAtHome.scores["com.tesla.riders"] ?: 0.0
+        assertTrue("Home Messages ($msgScore) should beat pre-arrival bounced Uber ($uberScore)", msgScore > uberScore)
+        assertTrue("Home Messages ($msgScore) should beat pre-arrival bounced Lyft ($lyftScore)", msgScore > lyftScore)
+        assertTrue("Home Messages ($msgScore) should beat pre-arrival bounced Waymo ($waymoScore)", msgScore > waymoScore)
+        assertTrue("Committed Robotaxi ($robotaxiScore) should outrank bounced Uber ($uberScore)", robotaxiScore > uberScore)
+    }
+
+    @Test fun onlineMomentModelAndPassiveNegativeFatigueLearnWithoutHardcoding() {
+        val now = ts(2026, 11, 28, 0, 30) // 12:30 AM, dark room, charging, muted
+        val bedCtx = DeviceContext(
+            onWifi = true,
+            networkId = "w_home",
+            charging = true,
+            brightnessBucket = 0,
+            volumeBucket = 0,
+            darkMode = true,
+            idleGapBucket = 2,
+        )
+        val buckets = bedCtx.activeBuckets(now, utc)
+        assertTrue("Should synthesize cross-feature x_bed", "x_bed" in buckets)
+        assertTrue("Should synthesize network-specific id", "netid_w_home" in buckets)
+        assertTrue("Should synthesize date-of-month end band", "dom_end" in buckets)
+
+        val weights = HashMap<String, MutableMap<String, Double>>()
+        // User repeatedly taps Kindle in bed while skipping Uber shown in the grid
+        repeat(4) {
+            updateOnlineWeights(weights, "com.amazon.kindle", buckets, positive = true)
+            updateOnlineWeights(weights, "com.ubercab", buckets, positive = false)
+        }
+        val ranked = rankContextualPackages(
+            events = emptyList(),
+            fallbackCounts = mapOf("com.amazon.kindle" to 5, "com.ubercab" to 5),
+            contextCounts = emptyMap(),
+            nowMs = now,
+            ctx = bedCtx,
+            activeNotifications = emptyList(),
+            selfPkg = "org.honeycomb.launcher",
+            zoneId = utc,
+            onlineWeights = weights,
+            fatigue = mapOf("com.ubercab" to FatigueState(count = 3.0, updatedAtMs = now - 60_000L)),
+        )
+        assertEquals("Online model + skip fatigue should put Kindle #1 over skipped Uber",
+            "com.amazon.kindle", ranked.ordered.first())
+    }
+
+    @Test fun learnedNotificationUtilityDownranksRepeatedlyDismissedSpam() {
+        assertTrue(notifUtility(opened = 10, dismissed = 1) > notifUtility(opened = 0, dismissed = 12) * 2.5)
+    }
 }
