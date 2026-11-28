@@ -1,14 +1,13 @@
 package org.honeycomb.launcher
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
@@ -55,24 +54,30 @@ internal fun FaceSwitcher(faces: List<FaceKind>, current: Int, ms: Long, style: 
     var panel by remember { mutableStateOf(Panel.Faces) }
     var editing by remember { mutableIntStateOf(current) }
     var candidate by remember { mutableStateOf(FaceKind.Stacked) }
+    val reduce = HoneycombTheme.reduceMotion
     BackHandler(panel != Panel.Faces) { panel = if (panel == Panel.Confirm) Panel.Gallery else Panel.Faces }
-    Crossfade(panel, Modifier.fillMaxSize().background(HoneycombColors.background), tween(Motion.CHOICES_FADE_MS), label = "face switcher") { shown ->
+    AnimatedContent(
+        targetState = panel,
+        modifier = Modifier.fillMaxSize().background(HoneycombColors.background),
+        transitionSpec = { routeTransitionSpec(forward = targetState.ordinal >= initialState.ordinal, reduceMotion = reduce) },
+        label = "face-switcher",
+    ) { shown ->
         when (shown) {
-            Panel.Faces -> BoxWithConstraints(Modifier.fillMaxSize()) {
+            Panel.Faces -> BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 val screen = LocalScreen.current
                 val scale = minOf(maxWidth.value * .64f / screen.width, maxHeight.value * .65f / screen.height)
                 val w = screen.width.dp * scale; val h = screen.height.dp * scale
                 HorizontalPager(pager, Modifier.fillMaxSize().testTag("face-picker"),
-                    contentPadding = PaddingValues(horizontal = (maxWidth - w) / 2), pageSpacing = 6.dp) { i ->
+                    contentPadding = PaddingValues(horizontal = (maxWidth - w) / 2), pageSpacing = 12.dp) { i ->
                     val kind = faces.getOrNull(i)
                     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.SpaceEvenly) {
-                        BasicText(if (pager.currentPage == i) kind?.label ?: "New" else "", style = HoneycombType.body)
+                        BasicText(if (pager.currentPage == i) kind?.label ?: "New" else "", style = HoneycombType.title)
                         val shape = rounded(22)
                         Box(Modifier.size(w, h).clip(shape), contentAlignment = Alignment.Center) {
                             if (kind == null) {
                                 Box(Modifier.fillMaxSize().border(2.dp, HoneycombColors.button, shape), contentAlignment = Alignment.Center) {
-                                    CircleButton(Symbols.add, "Add", { panel = Panel.Gallery }, size = 60.wp, tint = HoneycombColors.button)
+                                    CircleButton(Symbols.add, "Add", { panel = Panel.Gallery }, size = 64.dp, tint = HoneycombColors.button)
                                 }
                             } else {
                                 Thumbnail(kind, ms, style(i), Modifier.fillMaxSize())
@@ -81,34 +86,66 @@ internal fun FaceSwitcher(faces: List<FaceKind>, current: Int, ms: Long, style: 
                                     .clickable(role = Role.Button) { select(i) })
                             }
                         }
-                        CapsuleButton("Edit", if (kind == null || pager.currentPage != i) null else ({ editing = i; panel = Panel.Edit }),
-                            Modifier.testTag("edit-$i"), height = 40.dp, minWidth = 96.dp)
+                        CapsuleButton(
+                            text = "Edit",
+                            onClick = if (kind == null || pager.currentPage != i) null else ({ editing = i; panel = Panel.Edit }),
+                            modifier = Modifier.testTag("edit-$i"),
+                            height = ButtonSize.regular,
+                            minWidth = ButtonSize.minPillWidth,
+                        )
                     }
                 }
             }
             Panel.Edit -> FaceEditor(faces[editing], ms, style(editing)) { save(editing, it); panel = Panel.Faces }
-            Panel.Gallery -> LazyColumn(Modifier.fillMaxSize().testTag("face-gallery"), horizontalAlignment = Alignment.CenterHorizontally,
-                contentPadding = PaddingValues(10.wp), verticalArrangement = Arrangement.spacedBy(6.wp)) {
-                item { BasicText("All Watch Faces", style = HoneycombType.title) }
-                items(FaceKind.entries) { kind ->
-                    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().clip(rounded(12.wp)).background(HoneycombColors.platter)
-                        .padding(8.wp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.wp)) {
-                        Thumbnail(kind, ms, FaceStyle(), Modifier.size(36.wp, 44.wp))
+            Panel.Gallery -> LazyColumn(
+                Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().testTag("face-gallery"),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                item(key = "header") {
+                    MinimalScreenHeader(
+                        title = "All Watch Faces",
+                        onBack = { panel = Panel.Faces },
+                        modifier = Modifier.padding(bottom = 10.dp),
+                    )
+                }
+                itemsIndexed(FaceKind.entries, key = { _, k -> k.name }) { idx, kind ->
+                    val rowShape = settingsCardShape(idx, FaceKind.entries.size)
+                    androidx.compose.foundation.layout.Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(rowShape)
+                            .background(HoneycombColors.platter)
+                            .tactileClickable(onClick = { candidate = kind; panel = Panel.Confirm }, pressedScale = 0.98f)
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Thumbnail(kind, ms, FaceStyle(), Modifier.size(48.dp, 62.dp))
                         BasicText(kind.label, Modifier.weight(1f), style = HoneycombType.headline)
-                        CapsuleButton("Get", { candidate = kind; panel = Panel.Confirm },
-                            Modifier.semantics { contentDescription = "Get ${kind.label}" }, height = 36.dp, sidePad = 14.dp)
+                        CapsuleButton(
+                            text = "Get",
+                            onClick = { candidate = kind; panel = Panel.Confirm },
+                            modifier = Modifier.semantics { contentDescription = "Get ${kind.label}" },
+                            height = ButtonSize.compact,
+                        )
                     }
                 }
             }
-            Panel.Confirm -> BoxWithConstraints(Modifier.fillMaxSize()) {
+            Panel.Confirm -> BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 val screen = LocalScreen.current
                 val s = minOf(maxWidth.value * .64f / screen.width, maxHeight.value * .59f / screen.height)
                 Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceEvenly) {
                     BasicText(candidate.label, style = HoneycombType.title)
                     Thumbnail(candidate, ms, FaceStyle(), Modifier.size(screen.width.dp * s, screen.height.dp * s))
-                    CapsuleButton("Add", { add(candidate) }, minWidth = 96.dp, height = 40.dp)
+                    CapsuleButton(
+                        text = "Add",
+                        onClick = { add(candidate) },
+                        height = ButtonSize.regular,
+                        minWidth = ButtonSize.minPillWidth,
+                        filled = true,
+                    )
                 }
             }
         }
@@ -119,26 +156,31 @@ internal fun FaceSwitcher(faces: List<FaceKind>, current: Int, ms: Long, style: 
 private fun FaceEditor(kind: FaceKind, ms: Long, initial: FaceStyle, done: (FaceStyle) -> Unit) {
     var draft by remember { mutableStateOf(initial) }
     val screen = LocalScreen.current
-    Column(Modifier.fillMaxSize().padding(bottom = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val s = minOf(maxWidth.value * .68f / screen.width, maxHeight.value * .57f / screen.height)
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceEvenly) {
-                BasicText("Color", style = HoneycombType.headline)
+                BasicText("Color", style = HoneycombType.title)
                 Thumbnail(kind, ms, draft, Modifier.size(screen.width.dp * s, screen.height.dp * s))
-                androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     faceColours.forEach { (name, seed) ->
                         val selected = draft.seed == seed
-                        // each swatch shows the accent its scheme gives the face: the phone's for "Phone colours"
                         val swatch = FacePalette(FaceStyle(name).scheme(HoneycombColors.scheme, HoneycombColors.dark)).hours
                         Box(Modifier.size(44.dp).selectable(selected, role = Role.RadioButton) { draft = draft.copy(colour = name) }
                             .semantics { contentDescription = name }, contentAlignment = Alignment.Center) {
-                            Box(Modifier.size(34.dp).border(if (selected) 2.dp else 0.dp, if (selected) HoneycombColors.accent else Color.Transparent, CircleShape)
+                            Box(Modifier.size(36.dp).border(if (selected) 2.dp else 0.dp, if (selected) HoneycombColors.accent else Color.Transparent, CircleShape)
                                 .padding(4.dp).background(swatch, CircleShape))
                         }
                     }
                 }
             }
         }
-        CapsuleButton("Done", { done(draft) }, minWidth = 96.dp, height = 40.dp)
+        CapsuleButton(
+            text = "Done",
+            onClick = { done(draft) },
+            height = ButtonSize.regular,
+            minWidth = ButtonSize.minPillWidth,
+            filled = true,
+        )
     }
 }

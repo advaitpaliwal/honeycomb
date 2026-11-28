@@ -185,7 +185,14 @@ fun SmartStack(onTop: (Boolean) -> Unit, onOpenMedia: (String) -> Unit) {
                 DateClock(ms, Modifier.padding(bottom = StackTokens.clockGap - GAP.wp).testTag("stack-time"))
                 if (items.size == 1) {
                     // Nothing live, playing, or added yet: show a clean card instead of an empty void
-                    Platter(Modifier.fillMaxWidth().testTag("stack-empty").pointerInput(Unit) { detectTapGestures { editing = true } }, padding = Space.l) {
+                    Platter(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(PlatterShape)
+                            .tactileClickable(onClick = { editing = true }, pressedScale = 0.98f)
+                            .testTag("stack-empty"),
+                        padding = Space.l,
+                    ) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                             BasicText("Smart Stack", style = HoneycombType.headline.copy(color = HoneycombColors.label))
                             BasicText("Live updates, now playing, and your widgets show up here. Tap to add widgets.",
@@ -367,10 +374,10 @@ private fun tellSize(ctx: android.content.Context, appWidgetId: Int, wPx: Int, h
     mgr.updateAppWidgetOptions(appWidgetId, opts)
 }
 
-/** Edit, under the last card: a clean, compact capsule instead of a huge full-width bar. */
+/** Edit, under the last card: unified standalone pill button. */
 @Composable
 private fun EditButton(modifier: Modifier, onTap: () -> Unit) = Box(modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-    CapsuleButton("Edit", onTap, Modifier.testTag("stack-edit"), height = 40.dp, minWidth = 96.dp)
+    CapsuleButton("Edit", onTap, Modifier.testTag("stack-edit"), height = ButtonSize.regular, minWidth = ButtonSize.minPillWidth)
 }
 
 /**

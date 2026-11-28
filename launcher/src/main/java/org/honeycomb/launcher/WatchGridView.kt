@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import kotlinx.coroutines.flow.Flow
+import org.honeycomb.launcher.design.ButtonSize
 import org.honeycomb.launcher.design.CapsuleButton
 import org.honeycomb.launcher.design.CircleButton
 import org.honeycomb.launcher.design.Symbols
@@ -514,8 +515,9 @@ fun WatchGrid(
                     .padding(bottom = scrollBottomInset + 22.dp)
                     .testTag("grid-edit-done")
                     .semantics { contentDescription = "Done rearranging" },
-                height = 40.dp,
-                minWidth = 112.dp,
+                height = ButtonSize.regular,
+                minWidth = ButtonSize.minPillWidth,
+                filled = true,
             )
         }
     }
@@ -535,7 +537,7 @@ fun ViewSwitchButton(showingGrid: Boolean, onSwitch: () -> Unit, modifier: Modif
         modifier.testTag(if (showingGrid) "list-view" else "grid-view")
             .semantics { contentDescription = label },
         icon = if (showingGrid) Symbols.list else Symbols.apps,
-        height = 40.dp,
-        minWidth = 136.dp,
+        height = ButtonSize.regular,
+        minWidth = ButtonSize.minWidePillWidth,
     )
 }

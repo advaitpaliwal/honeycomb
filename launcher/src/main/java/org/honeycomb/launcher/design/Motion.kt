@@ -160,7 +160,7 @@ object Motion {
     fun reduceMotion(): Boolean = !android.animation.ValueAnimator.areAnimatorsEnabled()
 
     /** [spec], or a snap when motion is reduced. */
-    fun <T> orSnap(reduce: Boolean, spec: () -> androidx.compose.animation.core.AnimationSpec<T>): androidx.compose.animation.core.AnimationSpec<T> =
+    fun <T> orSnap(reduce: Boolean, spec: () -> androidx.compose.animation.core.FiniteAnimationSpec<T>): androidx.compose.animation.core.FiniteAnimationSpec<T> =
         if (reduce) androidx.compose.animation.core.snap() else spec()
 
     /** Reduce Motion as state: re-read whenever the setting changes, so turning it on applies at once. */

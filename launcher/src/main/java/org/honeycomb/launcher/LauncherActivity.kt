@@ -407,11 +407,23 @@ class LauncherActivity : ComponentActivity() {
                                 NotificationCentre(onEnd = { end -> if (space.sheetEnd != end) space = space.copy(sheetEnd = end) })
                             }
                             EdgeSheet(open = s.edge == Edge.Control, controller = controlSheet) {
-                                if (s.quiet) QuietScreen(onBack = { input(Input.Back) })
-                                else ControlCentre(
-                                    onHoldQuiet = { input(Input.HoldQuiet) },
-                                    onEnd = { end -> if (space.sheetEnd != end) space = space.copy(sheetEnd = end) },
-                                )
+                                val reduce = org.honeycomb.launcher.design.HoneycombTheme.reduceMotion
+                                androidx.compose.animation.AnimatedContent(
+                                    targetState = s.quiet,
+                                    transitionSpec = {
+                                        org.honeycomb.launcher.design.routeTransitionSpec(
+                                            forward = targetState,
+                                            reduceMotion = reduce,
+                                        )
+                                    },
+                                    label = "control-quiet",
+                                ) { showQuiet ->
+                                    if (showQuiet) QuietScreen(onBack = { input(Input.Back) })
+                                    else ControlCentre(
+                                        onHoldQuiet = { input(Input.HoldQuiet) },
+                                        onEnd = { end -> if (space.sheetEnd != end) space = space.copy(sheetEnd = end) },
+                                    )
+                                }
                             }
                         }
                     }

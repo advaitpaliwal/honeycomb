@@ -126,7 +126,8 @@ fun NotificationCentre(onEnd: (Boolean) -> Unit) {
             // the watch's "Clear All" at the top of the scroll
             if (list.isNotEmpty()) item(key = "clear-all") {
                 CapsuleButton("Clear All", { runCatching { MediaListener.Defaults.live?.cancelAllNotifications() } },
-                    Modifier.fillMaxWidth().padding(bottom = NcSize.gap).testTag("clear-all").semantics { contentDescription = "Clear all" })
+                    Modifier.fillMaxWidth().padding(bottom = NcSize.gap).testTag("clear-all").semantics { contentDescription = "Clear all" },
+                    height = ButtonSize.large)
             }
             // one stack per app (CardStack.kt): its newest card in front, the next two as platter edges below it; opened,
             // its header is the watch's: the app's name on the left and Show Less on the right, nothing else

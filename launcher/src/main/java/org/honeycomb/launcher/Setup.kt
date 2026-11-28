@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 
 /**
  * First-run setup: every role and permission Honeycomb uses, one per screen, each through Android's own prompt or Settings
@@ -172,14 +173,19 @@ class SetupActivity : ComponentActivity() {
             Setup.finish(this); finish(); return
         }
         fullScreen {
-            val s = step
-            val b = blocked
-            if (b != null) SetupScreen(Restricted.TITLE, Restricted.BODY, Restricted.BUTTON, skip = { told = true; blocked = null }) {
-                told = true
-                runCatching { startActivity(Restricted.appInfo(this)) }
+            val reduce = HoneycombTheme.reduceMotion
+            androidx.compose.animation.AnimatedContent(
+                targetState = Pair(blocked, step),
+                transitionSpec = { routeTransitionSpec(forward = true, reduceMotion = reduce) },
+                label = "setup-step",
+            ) { (b, s) ->
+                if (b != null) SetupScreen(Restricted.TITLE, Restricted.BODY, Restricted.BUTTON, skip = { told = true; blocked = null }) {
+                    told = true
+                    runCatching { startActivity(Restricted.appInfo(this@SetupActivity)) }
+                }
+                else if (s == null) SetupScreen("You're\nall set", "Go home any time to come back here.", "Done", skip = null) { Setup.finish(this@SetupActivity); finish() }
+                else SetupScreen(s.title, s.body, s.button, skip = { pass(s) }) { act(s) }
             }
-            else if (s == null) SetupScreen("You're\nall set", "Go home any time to come back here.", "Done", skip = null) { Setup.finish(this); finish() }
-            else SetupScreen(s.title, s.body, s.button, skip = { pass(s) }) { act(s) }
         }
     }
 
@@ -266,16 +272,16 @@ private fun ComponentActivity.fullScreen(content: @Composable () -> Unit) {
 @Composable
 private fun SetupScreen(title: String, body: String, button: String, skip: (() -> Unit)?, onButton: () -> Unit) = HoneycombTheme {
     OnboardingPage(title, body) {
-        CapsuleButton(button, onButton, Modifier.fillMaxWidth(), filled = true)
-        if (skip != null) CapsuleButton("Skip", skip, Modifier.fillMaxWidth())
+        CapsuleButton(button, onButton, Modifier.fillMaxWidth(), height = ButtonSize.large, filled = true)
+        if (skip != null) CapsuleButton("Skip", skip, Modifier.fillMaxWidth(), height = ButtonSize.large)
     }
 }
 
-/** The setup-style screen frame: black, inside the safe area, the watch's 16 wp list inset at the sides and [Space.xl] top and bottom. */
+/** The setup-style screen frame: black, inside the safe area, with balanced side and bottom insets above the gesture bar. */
 @Composable
 internal fun ScreenFrame(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) =
     Box(modifier.fillMaxSize().background(HoneycombColors.background).safeDrawingPadding()) {
-        Box(Modifier.fillMaxSize().padding(horizontal = Space.l, vertical = Space.xl), content = content)
+        Box(Modifier.fillMaxSize().padding(start = Space.l, end = Space.l, top = Space.xl, bottom = Space.m), content = content)
     }
 
 /**
@@ -298,7 +304,7 @@ internal fun OnboardingPage(title: String, body: String, modifier: Modifier = Mo
                     }
                 }
             }
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s),
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(ButtonSize.stackGap),
                 horizontalAlignment = Alignment.CenterHorizontally, content = actions)
         }
     }

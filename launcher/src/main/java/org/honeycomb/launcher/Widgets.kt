@@ -176,25 +176,51 @@ object WidgetResults {
 
 const val REQUEST_CONFIGURE = 7042
 
-/** Every installed widget, by app and name. */
+/** Every installed widget, by app and name, in the unified segmented settings language. */
 @Composable
 fun WidgetPicker(mgr: AppWidgetManager, onPick: (AppWidgetProviderInfo) -> Unit, onClose: () -> Unit) {
     val ctx = LocalContext.current
     val providers = remember { mgr.installedProviders.sortedBy { it.loadLabel(ctx.packageManager).lowercase() } }
-    Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(decorFitsSystemWindows = false)) { ProvideScale {
-        Platter(padding = 0.dp) { Column(Modifier.padding(top = Space.m)) {
-            BasicText("Add a widget", Modifier.padding(start = Space.l, bottom = Space.s),
-                style = HoneycombType.footnote.copy(color = HoneycombColors.secondaryLabel))
-            LazyColumn(Modifier.heightIn(max = 520.dp)) {
-                itemsIndexed(providers) { i, p ->
-                    val icon = remember(p) { runCatching { p.loadIcon(ctx, ctx.resources.displayMetrics.densityDpi)?.toBitmap(72, 72)?.asImageBitmap() }.getOrNull() }
-                    Row(p.loadLabel(ctx.packageManager), leading = {
-                        icon?.let { Image(it, contentDescription = null, modifier = Modifier.size(28.wp)) }
-                    }, subtitle = appLabel(ctx, p.provider.packageName), onClick = { onPick(p) })
+    Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        ProvideScale {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .background(HoneycombColors.background)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                MinimalScreenHeader(
+                    title = "Add a widget",
+                    onBack = onClose,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    itemsIndexed(providers) { idx, p ->
+                        val icon = remember(p) {
+                            runCatching { p.loadIcon(ctx, ctx.resources.displayMetrics.densityDpi)?.toBitmap(96, 96)?.asImageBitmap() }.getOrNull()
+                        }
+                        NavSummaryRow(
+                            title = p.loadLabel(ctx.packageManager),
+                            valueText = appLabel(ctx, p.provider.packageName),
+                            onClick = { onPick(p) },
+                            index = idx,
+                            count = providers.size,
+                            appIcon = icon,
+                            monogram = if (icon == null) p.loadLabel(ctx.packageManager).take(1).uppercase() else null,
+                        )
+                    }
                 }
             }
-        } }
-    } }
+        }
+    }
 }
 
 private fun appLabel(ctx: Context, pkg: String) =

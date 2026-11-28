@@ -273,14 +273,10 @@ fun CardStack(
     }
 }
 
-/**
- * The open stack's "Show Less": a small capsule whose label is footnote-sized, as watchOS draws it, so the group's
- * name beside it keeps its room on a 349 dp screen (at headline size the name collapsed to "...").
- */
+/** The open stack's "Show Less": a compact inline capsule so the group's name beside it keeps its full width. */
 @Composable
 fun StackPill(text: String, modifier: Modifier = Modifier, onTap: () -> Unit) {
-    CapsuleButton(text, onTap, modifier, icon = Symbols.showLess, height = ControlSize.small,
-        style = HoneycombType.smallControl, iconSize = 14.wp, sidePad = 12.wp)
+    CapsuleButton(text, onTap, modifier, icon = Symbols.showLess, height = ButtonSize.compact)
 }
 
 /** A piled sliver minus the card in front of it: that card is [inset] wider a side and ends [top] below the sliver's top. */

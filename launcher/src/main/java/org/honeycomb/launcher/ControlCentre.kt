@@ -439,7 +439,7 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                                 contentDescription = "Add control",
                                 onClick = { showAddSheet = true },
                                 modifier = Modifier.testTag("control-add"),
-                                size = 40.dp,
+                                size = ButtonSize.circleRegular,
                             )
                             CapsuleButton(
                                 text = "Done",
@@ -449,8 +449,7 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                                 },
                                 modifier = Modifier.testTag("control-done"),
                                 filled = true,
-                                height = 40.dp,
-                                minWidth = 96.dp,
+                                height = ButtonSize.compact,
                             )
                         }
                     }
@@ -536,7 +535,7 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                     Column(
                         Modifier.fillMaxWidth().padding(top = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(ButtonSize.stackGap),
                     ) {
                         if (!editing) {
                             CapsuleButton(
@@ -546,8 +545,8 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                                     editing = true
                                 },
                                 modifier = Modifier.testTag("control-edit"),
-                                height = 40.dp,
-                                minWidth = 112.dp,
+                                height = ButtonSize.regular,
+                                minWidth = ButtonSize.minPillWidth,
                             )
                         }
                         if (availableUpdate != null && !editing) {
@@ -563,7 +562,7 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                                 modifier = Modifier.testTag("control-update"),
                                 icon = Symbols.download,
                                 filled = true,
-                                height = 40.dp,
+                                height = ButtonSize.regular,
                             )
                         }
                     }
@@ -646,7 +645,7 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                                     showAddSheet = false
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                height = 42.dp,
+                                height = ButtonSize.large,
                             )
                         }
                         Spacer(Modifier.height(scrollBottomInset + 8.dp))
@@ -742,8 +741,8 @@ private const val FLASHLIGHT_GLYPH = 26f
 // ---- A7: Quiet ----------------------------------------------------------------------------------------------------
 
 /**
- * Quiet's own screen (touch and hold on the Quiet pill): Back and the time, the title and state, and one setting on a platter, on
- * the same sheet backdrop as Control Centre.
+ * Quiet's own screen (touch and hold on the Quiet pill): unified Material 3 Expressive header, segmented choice cards,
+ * and repeat-caller protection switch on the same sheet backdrop as Control Centre.
  */
 @Composable
 fun QuietScreen(onBack: () -> Unit) {
@@ -753,78 +752,49 @@ fun QuietScreen(onBack: () -> Unit) {
     var repeat by remember { mutableStateOf(Quiet.repeatCallers(ctx)) }
     val body = HoneycombType.body.copy(color = HoneycombColors.secondaryLabel)
     HoneycombTheme { Backdrop(Modifier.testTag("quiet"), sheet = true) {
-        // the watch's own insets (31-settings-notifications): Back and text 16.5 pt from the screen's left, the time 18 pt
-        // from its right, the platter 2.5 pt from each side with its text 14 pt in
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = scrollTopInset, bottom = scrollBottomInset)) {
-            Row(Modifier.fillMaxWidth().padding(start = QuietInset.text, end = QuietInset.time), verticalAlignment = Alignment.CenterVertically) {
-                CircleButton(Symbols.back, "Back", onBack, Modifier.testTag("quiet-back"))
-                Spacer(Modifier.weight(1f))
-                // a watchOS page header: Back at the left, the time at the top right; battery shows only in Control Centre
-                BasicText(clock(System.currentTimeMillis()), Modifier.align(Alignment.Top).testTag("quiet-time"), style = HoneycombType.time)
-            }
-            Spacer(Modifier.height(Space.s))
-            BasicText("Quiet", Modifier.padding(horizontal = QuietInset.text), style = HoneycombType.largeTitle)
-            Spacer(Modifier.height(Space.s))
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, top = statusBarInset + 12.dp, bottom = scrollBottomInset + 24.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            MinimalScreenHeader(
+                title = "Quiet",
+                onBack = onBack,
+                backTag = "quiet-back",
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
             val (state, calls) = Quiet.words(t.quiet, mode, repeat)
-            BasicText(state, Modifier.padding(horizontal = QuietInset.text).testTag("quiet-state"), style = body)
-            Spacer(Modifier.height(Space.m))
-            BasicText("Allow calls from", Modifier.padding(horizontal = QuietInset.text), style = HoneycombType.footnote.copy(color = HoneycombColors.secondaryLabel))
-            Spacer(Modifier.height(Space.xs))
-            Platter(Modifier.fillMaxWidth().padding(horizontal = QuietInset.platter).testTag("quiet-contacts"), padding = 0.dp) {
-                Column(Modifier.fillMaxWidth()) {
-                    Quiet.CallMode.entries.forEachIndexed { idx, option ->
-                        if (idx > 0) {
-                            Box(Modifier.fillMaxWidth().padding(horizontal = QuietInset.row).height(1.dp).background(HoneycombColors.outline))
-                        }
-                        val selected = mode == option
-                        Row(
-                            Modifier.fillMaxWidth()
-                                .clickable { if (Quiet.setCallMode(ctx, option)) mode = option }
-                                .sizeIn(minHeight = ControlSize.minHitArea)
-                                .padding(horizontal = QuietInset.row, vertical = Space.s)
-                                .testTag("quiet-mode-${option.name.lowercase()}"),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            BasicText(option.label, Modifier.weight(1f), style = HoneycombType.body)
-                            if (selected) {
-                                Box(Modifier.size(10.dp).clip(CircleShape).background(HoneycombColors.accent))
-                            }
-                        }
-                    }
+            BasicText(state, Modifier.padding(horizontal = 4.dp, vertical = 4.dp).testTag("quiet-state"), style = body)
+            SectionKicker("Allow calls from")
+            Column(Modifier.fillMaxWidth().testTag("quiet-contacts"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Quiet.CallMode.entries.forEachIndexed { idx, option ->
+                    CleanChoiceRow(
+                        title = option.label,
+                        selected = mode == option,
+                        onClick = { if (Quiet.setCallMode(ctx, option)) mode = option },
+                        index = idx,
+                        count = Quiet.CallMode.entries.size,
+                        modifier = Modifier.testTag("quiet-mode-${option.name.lowercase()}"),
+                    )
                 }
             }
             if (mode != Quiet.CallMode.EVERYONE) {
-                Spacer(Modifier.height(Space.s))
-                Platter(Modifier.fillMaxWidth().padding(horizontal = QuietInset.platter).testTag("quiet-repeat"), padding = 0.dp) {
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .toggleable(repeat, role = Role.Switch, onValueChange = {
-                                if (Quiet.setRepeatCallers(ctx, it)) repeat = it
-                            })
-                            .sizeIn(minHeight = ControlSize.minHitArea)
-                            .padding(horizontal = QuietInset.row, vertical = Space.s),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            BasicText("Repeat callers", style = HoneycombType.body)
-                            BasicText("2nd call within 15 min rings", style = HoneycombType.footnote.copy(color = HoneycombColors.secondaryLabel))
-                        }
-                        Spacer(Modifier.size(Space.s))
-                        NativeSwitch(checked = repeat)
-                    }
-                }
+                SectionKicker("Emergency breakthrough")
+                CleanSwitchRow(
+                    title = "Repeat callers",
+                    subtitle = "2nd call within 15 min rings",
+                    checked = repeat,
+                    onCheckedChange = { if (Quiet.setRepeatCallers(ctx, it)) repeat = it },
+                    index = 0,
+                    count = 1,
+                    glyph = Symbols.bell,
+                    modifier = Modifier.testTag("quiet-repeat"),
+                )
             }
-            Spacer(Modifier.height(Space.m))
-            BasicText(calls, Modifier.padding(horizontal = QuietInset.text), style = HoneycombType.footnote.copy(color = HoneycombColors.secondaryLabel))
+            SettingsNote(calls, Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp))
         }
     } }
-}
-
-/** A watchOS settings page's insets, measured in 31-settings-notifications (422 px = 211 pt). */
-private object QuietInset {
-    val text: Dp get() = 16.5f.wp
-    val time: Dp get() = 18.wp
-    val platter: Dp get() = 2.5f.wp
-    val row: Dp get() = 14.wp
 }
 

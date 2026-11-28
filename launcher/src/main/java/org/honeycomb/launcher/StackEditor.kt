@@ -58,16 +58,16 @@ fun StackEditor(widgets: List<Int>, onAdd: (AppWidgetProviderInfo) -> Unit, onCl
             val margin = windowMargin(maxWidth.value).dp
             Column(Modifier.padding(horizontal = margin).widthIn(max = Wp.MAX_CONTENT_DP.dp).fillMaxSize().padding(vertical = Space.l)
                 .testTag("stack-editor"), verticalArrangement = Arrangement.spacedBy(Space.m)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText("Edit Smart Stack", Modifier.weight(1f), style = HoneycombType.title)
-                    BasicText("Done", Modifier.testTag("stack-done").heightIn(min = ControlSize.minHitArea)
-                        .clickable(role = Role.Button, onClick = onClose).padding(horizontal = Space.s).wrapContentHeight(),
-                        style = HoneycombType.headline.copy(color = HoneycombColors.accent))
-                }
+                MinimalScreenHeader(
+                    title = "Edit Smart Stack",
+                    actionLabel = "Done",
+                    onAction = onClose,
+                    actionTag = "stack-done",
+                )
                 BasicText("Live Updates and what is playing always come first.", style = HoneycombType.footnote.copy(color = HoneycombColors.secondaryLabel))
                 Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(RowGap)) {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(RowGap)) {
-                        itemsIndexed(widgets, key = { _, id -> id }) { i, id ->
+                        itemsIndexed(widgets, key = { _, id -> id }) { _, id ->
                             val info = mgr.getAppWidgetInfo(id) ?: return@itemsIndexed
                             val name = info.loadLabel(ctx.packageManager)
                             val icon = remember(id) { runCatching { info.loadIcon(ctx, 0)?.toBitmap()?.asImageBitmap() }.getOrNull() }
@@ -77,24 +77,29 @@ fun StackEditor(widgets: List<Int>, onAdd: (AppWidgetProviderInfo) -> Unit, onCl
                                 leading = icon?.let { { Image(it, null, Modifier.fillMaxSize()) } },
                                 below = {
                                     CircleButton(Symbols.arrowUp, "Move $name up", { Widgets.move(ctx, id, -1) },
-                                        size = 36.dp, tint = HoneycombColors.button, enabled = widgets.first() != id)
+                                        size = ButtonSize.circleSmall, tint = HoneycombColors.button, enabled = widgets.first() != id)
                                     CircleButton(Symbols.arrowDown, "Move $name down", { Widgets.move(ctx, id, 1) },
-                                        size = 36.dp, tint = HoneycombColors.button, enabled = widgets.last() != id)
+                                        size = ButtonSize.circleSmall, tint = HoneycombColors.button, enabled = widgets.last() != id)
                                     CapsuleButton(
                                         text = if (curRows >= 4) "1x" else "${curRows + 1}x",
                                         onClick = { Widgets.setCustomRows(ctx, id, if (curRows >= 4) 1 else curRows + 1) },
-                                        height = 36.dp,
-                                        sidePad = 12.dp,
+                                        height = ButtonSize.compact,
                                     )
                                     Spacer(Modifier.weight(1f))
                                     CircleButton(Symbols.close, "Remove $name", { Widgets.discard(ctx, id) },
-                                        Modifier.testTag("remove-$id"), size = 36.dp, tint = HoneycombColors.destructive)
+                                        Modifier.testTag("remove-$id"), size = ButtonSize.circleSmall, tint = HoneycombColors.destructive)
                                 })
                         }
                     }
                 }
-                Row("Add widget", Modifier.heightIn(min = LocalViewConfiguration.current.minimumTouchTargetSize.height)
-                    .testTag("stack-add"), icon = Symbols.add, onClick = { picking = true })
+                NavSummaryRow(
+                    title = "Add widget",
+                    valueText = "Installed Android widgets",
+                    onClick = { picking = true },
+                    glyph = Symbols.add,
+                    accentActive = true,
+                    modifier = Modifier.heightIn(min = LocalViewConfiguration.current.minimumTouchTargetSize.height).testTag("stack-add"),
+                )
             }
         }
         if (picking) WidgetPicker(mgr, onPick = { picking = false; onAdd(it) }, onClose = { picking = false })

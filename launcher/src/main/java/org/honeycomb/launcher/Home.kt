@@ -678,8 +678,9 @@ fun FavouritesScreen(
                     .padding(bottom = scrollBottomInset + 22.dp)
                     .testTag("favourites-edit-done")
                     .semantics { contentDescription = "Done editing" },
-                height = 40.dp,
-                minWidth = 112.dp,
+                height = ButtonSize.regular,
+                minWidth = ButtonSize.minPillWidth,
+                filled = true,
             )
         }
         if (!visualJiggle && menuSlot == null) {
@@ -692,8 +693,8 @@ fun FavouritesScreen(
                     .testTag("all-apps-pill")
                     .semantics { contentDescription = "All Apps" },
                 icon = Symbols.apps,
-                height = 40.dp,
-                minWidth = 136.dp,
+                height = ButtonSize.regular,
+                minWidth = ButtonSize.minWidePillWidth,
             )
         }
         menuSlot?.let { (slot, app) ->
@@ -832,7 +833,8 @@ private fun QuickActionSearchRow(
         modifier = modifier
             .fillMaxWidth()
             .height(LIST_ROW.dp)
-            .clickable(onClick = onClick)
+            .clip(rounded(NativeShapes.large))
+            .tactileClickable(onClick = onClick, pressedScale = 0.97f)
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp),
@@ -953,10 +955,9 @@ fun AppListScreen(
                         Modifier
                             .fillMaxWidth()
                             .height(LIST_ROW.dp)
-                            .testTag("row-$key")
-                            .semantics { contentDescription = app.label }
-                            .pointerInput(key, pickFor, trimmed) {
-                                detectTapGestures {
+                            .clip(rounded(NativeShapes.large))
+                            .tactileClickable(
+                                onClick = {
                                     if (pickFor != null) {
                                         query = ""
                                         onPicked(key)
@@ -964,8 +965,11 @@ fun AppListScreen(
                                         query = ""
                                         onOpen(app.component, bounds)
                                     }
-                                }
-                            }
+                                },
+                                pressedScale = 0.97f,
+                            )
+                            .testTag("row-$key")
+                            .semantics { contentDescription = app.label }
                             .padding(start = 8.dp, end = if (showScrubber) 26.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp),
