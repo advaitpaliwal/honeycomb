@@ -77,6 +77,59 @@ object ControlGrid {
     fun place(cells: List<Cell>): Map<String, Box4> = cells.associate { c ->
         c.id to Box4(SIDE + c.col * (BUTTON_W + GAP_X), c.row * (BUTTON_H + GAP_Y), BUTTON_W, BUTTON_H)
     }
+
+    /** Every control that can be added to Control Centre in Edit mode (default watchOS grid + optional Block/Settings). */
+    val catalog: List<Pair<String, String>> = listOf(
+        "bluetooth" to "Bluetooth",
+        "wifi" to "Wi-Fi",
+        "airplane" to "Airplane Mode",
+        "battery" to "Battery",
+        "silent" to "Silent Mode",
+        "flashlight" to "Flashlight",
+        "quiet" to "Quiet",
+        "rotation" to "Rotation Lock",
+        "volume" to "Volume",
+        "output" to "Audio Output",
+        "brightness" to "Display Settings",
+        "timer" to "Timer",
+        "calculator" to "Calculator",
+        "camera" to "Camera",
+        "mirroring" to "Screen Mirroring",
+        "hotspot" to "Hotspot",
+        "block" to "Block",
+        "settings" to "Honeycomb Settings",
+    )
+
+    val validIds: Set<String> = catalog.map { it.first }.toSet()
+}
+
+/** Persistent custom Control Centre order and active tiles (watchOS Edit / Add / Remove / Reorder). */
+object ControlPrefs {
+    private const val PREFS = "control_centre"
+    private const val KEY_ORDER = "tile_order"
+
+    fun load(ctx: Context): List<String> {
+        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ORDER, null) ?: return ControlGrid.order
+        val parsed = raw.split(",").map { it.trim() }.filter { it in ControlGrid.validIds }.distinct()
+        return if (parsed.isEmpty()) ControlGrid.order else parsed
+    }
+
+    fun save(ctx: Context, ids: List<String>) {
+        val clean = ids.filter { it in ControlGrid.validIds }.distinct()
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_ORDER, clean.joinToString(",")).apply()
+    }
+
+    fun reset(ctx: Context): List<String> {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_ORDER).apply()
+        return ControlGrid.order
+    }
+
+    fun move(ids: List<String>, from: Int, to: Int): List<String> {
+        if (from !in ids.indices || to !in ids.indices || from == to) return ids
+        val next = ids.toMutableList()
+        next.add(to, next.removeAt(from))
+        return next
+    }
 }
 
 // ---- brightness and volume ----------------------------------------------------------------------------------------

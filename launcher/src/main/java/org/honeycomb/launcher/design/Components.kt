@@ -111,9 +111,8 @@ fun Modifier.fluidPress(
     }
 }
 
-/** A Control Centre tile's surface: [fill] in a [Radius.button] rounded rectangle; the battery status is a capsule. */
-fun Modifier.controlSurface(fill: Color, status: Boolean = false): Modifier =
-    if (status) clip(Capsule).background(fill) else clip(rounded(Radius.button)).background(fill)
+/** A Control Centre tile's surface: true Apple Watch full-pill [Capsule] fill. */
+fun Modifier.controlSurface(fill: Color, status: Boolean = false): Modifier = clip(Capsule).background(fill)
 
 /** A tap, a touch and hold, and (with [on] set) a switch's semantics. */
 private fun Modifier.tap(on: Boolean?, onClick: () -> Unit, onLongClick: (() -> Unit)?, interaction: MutableInteractionSource) =
@@ -167,7 +166,7 @@ fun WatchButton(
             .tap(on, onClick, onLongClick, interaction).semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        if (label != null) BasicText(label, style = HoneycombType.headline.copy(color = ink), maxLines = 1)
+        if (label != null) BasicText(label, style = HoneycombType.title.copy(color = ink), maxLines = 1)
         else Glyph(icon, ink, 26.wp)
     }
 }
@@ -455,6 +454,24 @@ fun ActionMenu(
             }
         }
     }
+}
+
+/** Native Material 3 ModalBottomSheet styled with Honeycomb's surface tokens. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BottomSheet(
+    onDismiss: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = HoneycombColors.platter,
+        contentColor = HoneycombColors.label,
+        scrimColor = HoneycombColors.sheetDim,
+        content = content,
+    )
 }
 
 /** Native Material 3 ModalBottomSheet wrapping [ActionMenu] with real drag-to-dismiss physics and scrim. */
@@ -1211,7 +1228,7 @@ fun NativeSwitch(checked: Boolean, modifier: Modifier = Modifier) {
     )
 }
 
-/** Native Material 3 Slider synced to Honeycomb's theme (e.g. Control Centre brightness). */
+/** Native Material 3 Slider synced to Honeycomb's theme. */
 @Composable
 fun NativeSlider(
     value: Float,
@@ -1230,6 +1247,70 @@ fun NativeSlider(
             inactiveTrackColor = HoneycombColors.button,
         ),
     )
+}
+
+/**
+ * Full-bleed Apple Control Center capsule slider built on official Material 3 Slider (native drag & accessibility,
+ * zero double-boxed chrome or skinny vertical thumb). Matches WatchButton's surface and corner radius exactly.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ControlCapsuleSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    icon: Icon,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    height: Dp = 54.dp,
+) {
+    val sliderState = remember {
+        androidx.compose.material3.SliderState(value = value.coerceIn(0f, 1f))
+    }
+    androidx.compose.runtime.LaunchedEffect(value) {
+        val clamped = value.coerceIn(0f, 1f)
+        if (kotlin.math.abs(sliderState.value - clamped) > 0.005f) sliderState.value = clamped
+    }
+    val fraction = sliderState.value.coerceIn(0f, 1f)
+    val shape = Capsule
+    val fillColor = HoneycombColors.accent
+    val trackColor = HoneycombColors.button
+    val iconColor = if (fraction > 0.14f) HoneycombColors.contentFor(fillColor) else HoneycombColors.contentFor(trackColor)
+    Box(
+        modifier = modifier
+            .height(height)
+            .clip(shape)
+            .background(trackColor)
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Slider(
+            state = sliderState,
+            onValueChange = { next ->
+                val clamped = next.coerceIn(0f, 1f)
+                sliderState.value = clamped
+                onValueChange(clamped)
+            },
+            modifier = Modifier.fillMaxWidth().height(height),
+            thumb = { Box(Modifier.size(0.dp)) },
+            track = { state ->
+                val f = state.value.coerceIn(0f, 1f)
+                Box(Modifier.fillMaxWidth().height(height).clip(shape).background(trackColor)) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(f.coerceAtLeast(0.02f))
+                            .height(height)
+                            .background(fillColor),
+                    )
+                }
+            },
+        )
+        Box(
+            modifier = Modifier.padding(start = 18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Glyph(icon, iconColor, 22.dp)
+        }
+    }
 }
 
 @Composable

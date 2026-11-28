@@ -2,6 +2,20 @@ package org.honeycomb.launcher
 
 import org.honeycomb.launcher.design.*
 import org.honeycomb.launcher.design.Space
+import android.view.HapticFeedbackConstants
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.zIndex
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyGridState
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -338,141 +352,313 @@ private val Bolt = Icon("M13.5 2 4.5 13.5h6.2L9.8 22l9.2-12h-6.4L13.5 2z")
 fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
     var nudge by remember { mutableIntStateOf(0) } // re-read right after a tap
     val now = rememberToggles(nudge)
-    val scroll = rememberScrollState()
     val ctx = LocalContext.current
+    val view = LocalView.current
     var brightness by remember { mutableStateOf(Levels.brightness(ctx)) }
+    var activeIds by remember { mutableStateOf(ControlPrefs.load(ctx)) }
+    var editing by remember { mutableStateOf(false) }
+    var showAddSheet by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
+    val curIds by rememberUpdatedState(activeIds)
     val resumes by FaceTick.resumes.collectAsState()
     LaunchedEffect(resumes) { brightness = Levels.brightness(ctx) }
-    DisposableEffect(Unit) { onDispose { DragOwners.set("brightness-slider", null) } }
-    fun act(f: () -> Unit): () -> Unit = { f(); nudge++ }
+    DisposableEffect(editing) {
+        DragOwners.editingLock = editing
+        onDispose {
+            DragOwners.editingLock = false
+            DragOwners.activeDrag = false
+            DragOwners.set("brightness-slider", null)
+        }
+    }
+    val reorderableState = rememberReorderableLazyGridState(gridState) { from, to ->
+        val fromKey = from.key as? String ?: return@rememberReorderableLazyGridState
+        val toKey = to.key as? String ?: return@rememberReorderableLazyGridState
+        val fromIdx = curIds.indexOf(fromKey)
+        val toIdx = curIds.indexOf(toKey)
+        if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+            val moved = ControlPrefs.move(curIds, fromIdx, toIdx)
+            activeIds = moved
+            ControlPrefs.save(ctx, moved)
+            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        }
+    }
+    fun act(f: () -> Unit): () -> Unit = { if (!editing) { f(); nudge++ } }
     HoneycombTheme { Backdrop(Modifier.testTag("control-centre"), sheet = true, ground = HoneycombColors.sheet) {
-        // a swipe up closes it once the list is at its end (the Space's table: sheetEnd)
-        LaunchedEffect(scroll) { androidx.compose.runtime.snapshotFlow { scroll.value >= scroll.maxValue }.collect(onEnd) }
-        // ControlGrid's numbers are watch points
+        // a swipe up closes it once the list is at its end (disabled while editing/reordering tiles)
+        LaunchedEffect(gridState, editing) {
+            androidx.compose.runtime.snapshotFlow { !editing && !gridState.canScrollForward }.collect(onEnd)
+        }
         Box(Modifier.fillMaxSize()) {
             val pt = 1.wp
-            val gridWidth = pt * (ControlGrid.BUTTON_W * ControlGrid.COLS + ControlGrid.GAP_X)
+            val gapX = pt * ControlGrid.GAP_X + 4.dp
+            val gapY = pt * ControlGrid.GAP_Y + 4.dp
+            val btnH = pt * ControlGrid.BUTTON_H
+            val sidePad = pt * ControlGrid.SIDE
             val updateState by AppUpdater.state.collectAsState()
             val availableUpdate = when (val s = updateState) {
                 is UpdateState.Available -> s.release
                 is UpdateState.ReadyToInstall -> s.release
                 else -> null
             }
-            Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(top = statusBarInset, bottom = scrollBottomInset), horizontalAlignment = Alignment.CenterHorizontally) {
-                Spacer(Modifier.height(pt * ControlGrid.CAPSULE_TOP))
-                BatteryCapsule(now, pt)
-                Spacer(Modifier.height(pt * ControlGrid.CAPSULE_GAP))
 
-                // Quick actions right at the top: Block + Settings / Update (never buried below the fold)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CapsuleButton(
-                        text = "Block",
-                        onClick = { ctx.startActivity(Intent(ctx, FeedsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
-                        modifier = Modifier.testTag("control-feeds"),
-                        icon = Symbols.block,
-                        height = 40.dp,
-                    )
-                    if (availableUpdate != null) {
-                        CapsuleButton(
-                            text = "Update ${availableUpdate.tag}",
-                            onClick = {
-                                ctx.startActivity(
-                                    Intent(ctx, HoneycombSettingsActivity::class.java)
-                                        .putExtra(AppUpdater.EXTRA_START_UPDATE, true)
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(ControlGrid.COLS),
+                state = gridState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = sidePad,
+                    end = sidePad,
+                    top = statusBarInset + pt * ControlGrid.CAPSULE_TOP,
+                    bottom = scrollBottomInset + 28.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(gapX),
+                verticalArrangement = Arrangement.spacedBy(gapY),
+            ) {
+                // Header: either watchOS Edit bar (+ / Done) or compact status capsule + full-bleed Brightness capsule
+                item(key = "cc-header", span = { GridItemSpan(ControlGrid.COLS) }) {
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (editing) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                CircleButton(
+                                    icon = Symbols.add,
+                                    contentDescription = "Add control",
+                                    onClick = { showAddSheet = true },
+                                    modifier = Modifier.testTag("control-add"),
+                                    size = 40.dp,
                                 )
-                            },
-                            modifier = Modifier.testTag("control-update"),
-                            icon = Symbols.download,
-                            filled = true,
-                            height = 40.dp,
-                        )
-                    } else {
-                        CapsuleButton(
-                            text = "Settings",
-                            onClick = {
-                                ctx.startActivity(
-                                    Intent(ctx, HoneycombSettingsActivity::class.java)
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                CapsuleButton(
+                                    text = "Done",
+                                    onClick = {
+                                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                        editing = false
+                                    },
+                                    modifier = Modifier.testTag("control-done"),
+                                    filled = true,
+                                    height = 40.dp,
+                                    minWidth = 96.dp,
                                 )
-                            },
-                            modifier = Modifier.testTag("control-settings"),
-                            icon = Symbols.settings,
-                            height = 40.dp,
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(pt * ControlGrid.GAP_Y * 2))
-
-                // Native Material 3 Brightness slider right at the top of Control Centre
-                Platter(
-                    modifier = Modifier
-                        .size(width = gridWidth, height = 56.dp)
-                        .onGloballyPositioned { c -> DragOwners.set("brightness-slider", c.boundsInRoot()) }
-                        .testTag("brightness-slider"),
-                    padding = 12.dp,
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Glyph(Symbols.sun, HoneycombColors.label, 20.dp)
-                        NativeSlider(
-                            value = brightness,
-                            onValueChange = { next ->
-                                brightness = next
-                                if (Levels.canWriteBrightness(ctx)) {
-                                    Levels.setBrightness(ctx, next)
-                                } else {
-                                    Device.launch(
-                                        ctx,
-                                        Intent(
-                                            Settings.ACTION_MANAGE_WRITE_SETTINGS,
-                                            android.net.Uri.fromParts("package", ctx.packageName, null),
-                                        ),
-                                    )
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(pt * ControlGrid.GAP_Y * 2))
-
-                ControlGrid.cells.groupBy { it.row }.toSortedMap().values.forEachIndexed { i, row ->
-                    if (i > 0) Spacer(Modifier.height(pt * ControlGrid.GAP_Y))
-                    Row(horizontalArrangement = Arrangement.spacedBy(pt * ControlGrid.GAP_X)) {
-                        row.sortedBy { it.col }.forEach { c ->
-                            Control(c.id, now, Modifier.size(pt * ControlGrid.BUTTON_W, pt * ControlGrid.BUTTON_H), pt, onHoldQuiet, ::act)
+                            }
+                        } else {
+                            if (now.charging || now.quiet) {
+                                BatteryCapsule(now, pt)
+                                Spacer(Modifier.height(14.dp))
+                            }
+                            val sliderH = btnH * 0.72f
+                            ControlCapsuleSlider(
+                                value = brightness,
+                                onValueChange = { next ->
+                                    brightness = next
+                                    if (Levels.canWriteBrightness(ctx)) {
+                                        Levels.setBrightness(ctx, next)
+                                    } else {
+                                        Device.launch(
+                                            ctx,
+                                            Intent(
+                                                Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                                android.net.Uri.fromParts("package", ctx.packageName, null),
+                                            ),
+                                        )
+                                    }
+                                },
+                                icon = Symbols.sun,
+                                contentDescription = "Brightness",
+                                height = sliderH,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onGloballyPositioned { c -> DragOwners.set("brightness-slider", c.boundsInRoot()) }
+                                    .testTag("brightness-slider"),
+                            )
                         }
                     }
                 }
-                Spacer(Modifier.height(pt * ControlGrid.CAPSULE_TOP))
+
+                // 2-column Apple Watch pure Capsule tiles with drag-to-reorder & per-tile remove badge in Edit mode
+                items(items = activeIds, key = { it }) { id ->
+                    ReorderableItem(reorderableState, key = id) { isDragging ->
+                        val scale by animateFloatAsState(
+                            targetValue = if (isDragging) 1.07f else 1f,
+                            animationSpec = PICKUP_SCALE_SPRING,
+                            label = "cc-drag-scale",
+                        )
+                        val jiggle = rememberGentleJiggle(editing && !isDragging, id.hashCode())
+                        val dragMod = if (editing) {
+                            Modifier.draggableHandle(
+                                enabled = true,
+                                onDragStarted = {
+                                    DragOwners.activeDrag = true
+                                    view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                },
+                                onDragStopped = {
+                                    DragOwners.activeDrag = false
+                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                },
+                            )
+                        } else {
+                            Modifier
+                        }
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(btnH)
+                                .zIndex(if (isDragging) 40f else 0f)
+                                .graphicsLayer {
+                                    scaleX = scale
+                                    scaleY = scale
+                                    rotationZ = jiggle
+                                },
+                        ) {
+                            Control(
+                                id = id,
+                                t = now,
+                                m = Modifier
+                                    .fillMaxSize()
+                                    .then(if (isDragging) Modifier.shadow(14.dp, Capsule, clip = false) else Modifier)
+                                    .then(dragMod),
+                                pt = pt,
+                                onHoldQuiet = { if (!editing) onHoldQuiet() },
+                                act = ::act,
+                            )
+                            if (editing && activeIds.size > 1) {
+                                Box(
+                                    Modifier
+                                        .align(Alignment.TopStart)
+                                        .offset(x = (-2).dp, y = (-2).dp)
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(HoneycombColors.error)
+                                        .clickable {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                            val next = activeIds - id
+                                            activeIds = next
+                                            ControlPrefs.save(ctx, next)
+                                        }
+                                        .testTag("control-remove-$id")
+                                        .semantics { contentDescription = "Remove $id" },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Glyph(Symbols.remove, HoneycombColors.contentFor(HoneycombColors.error), 16.dp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Footer: watchOS Edit button (and optional Update button when a newer signed release exists)
+                item(key = "cc-footer", span = { GridItemSpan(ControlGrid.COLS) }) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (!editing) {
+                            CapsuleButton(
+                                text = "Edit",
+                                onClick = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                    editing = true
+                                },
+                                modifier = Modifier.testTag("control-edit"),
+                                height = 40.dp,
+                                minWidth = 112.dp,
+                            )
+                        }
+                        if (availableUpdate != null && !editing) {
+                            CapsuleButton(
+                                text = "Update ${availableUpdate.tag}",
+                                onClick = {
+                                    ctx.startActivity(
+                                        Intent(ctx, HoneycombSettingsActivity::class.java)
+                                            .putExtra(AppUpdater.EXTRA_START_UPDATE, true)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                },
+                                modifier = Modifier.testTag("control-update"),
+                                icon = Symbols.download,
+                                filled = true,
+                                height = 40.dp,
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (showAddSheet) {
+                val missing = ControlGrid.catalog.filter { (id, _) -> id !in activeIds }
+                BottomSheet(onDismiss = { showAddSheet = false }) {
+                    Column(
+                        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        BasicText("Add Controls", style = HoneycombType.title)
+                        Spacer(Modifier.height(4.dp))
+                        if (missing.isEmpty()) {
+                            BasicText(
+                                "All controls are already in Control Centre.",
+                                style = HoneycombType.body.copy(color = HoneycombColors.secondaryLabel),
+                            )
+                        } else {
+                            missing.forEach { (id, label) ->
+                                Row(
+                                    title = label,
+                                    icon = controlIcon(id),
+                                    onClick = {
+                                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                        val next = activeIds + id
+                                        activeIds = next
+                                        ControlPrefs.save(ctx, next)
+                                        showAddSheet = false
+                                    },
+                                )
+                            }
+                        }
+                        if (activeIds != ControlGrid.order) {
+                            Spacer(Modifier.height(4.dp))
+                            CapsuleButton(
+                                text = "Reset to defaults",
+                                onClick = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                    activeIds = ControlPrefs.reset(ctx)
+                                    showAddSheet = false
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                height = 42.dp,
+                            )
+                        }
+                        Spacer(Modifier.height(scrollBottomInset + 8.dp))
+                    }
+                }
             }
         }
     } }
 }
 
 /**
- * The watch's status capsule: 78 x 21 wp, centred, holding the glyphs that apply (the green bolt while charging, the
- * Quiet moon while Quiet is on). The watch's phone glyph means "connected to its iPhone", which a phone never is.
+ * Compact watchOS-style status pill centred at the top of Control Centre: shows a tight charging bolt + % and/or
+ * Quiet moon only when active (never a wide empty grey bar).
  */
 @Composable
 private fun BatteryCapsule(t: Toggles, pt: androidx.compose.ui.unit.Dp) {
+    if (!t.charging && !t.quiet) return
     val said = buildString { append("battery ${t.battery} percent"); if (t.charging) append(", charging"); if (t.quiet) append(", Quiet on") }
     Row(
-        Modifier.size(pt * ControlGrid.CAPSULE_W, pt * ControlGrid.CAPSULE_H).controlSurface(HoneycombColors.button, status = true)
-            .testTag("status").semantics { contentDescription = said },
-        horizontalArrangement = Arrangement.spacedBy(pt * 4, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
+        Modifier
+            .height(26.dp)
+            .controlSurface(HoneycombColors.button, status = true)
+            .padding(horizontal = 12.dp)
+            .testTag("status")
+            .semantics { contentDescription = said },
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (t.charging) Glyph(Bolt, HoneycombColors.accent, pt * ControlGrid.CAPSULE_GLYPH, Modifier.testTag("status-charging"))
-        if (t.quiet) Glyph(Symbols.moon, HoneycombColors.accent, pt * ControlGrid.CAPSULE_GLYPH, Modifier.testTag("status-quiet"))
+        if (t.charging) {
+            Glyph(Bolt, HoneycombColors.accent, 14.dp, Modifier.testTag("status-charging"))
+            BasicText("${t.battery}%", style = HoneycombType.footnote.copy(color = HoneycombColors.label))
+        }
+        if (t.quiet) Glyph(Symbols.moon, HoneycombColors.accent, 14.dp, Modifier.testTag("status-quiet"))
     }
 }
 
@@ -511,7 +697,34 @@ private fun Control(id: String, t: Toggles, m: Modifier, pt: androidx.compose.ui
         "hotspot" -> WatchButton(Symbols.hotspot, said("Hotspot", t.hotspot),
             act { Device.open(ctx, "android.settings.TETHER_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS) },
             m.testTag("tile-hotspot"), on = t.hotspot)
+        "block" -> WatchButton(Symbols.block, "Block",
+            act { ctx.startActivity(Intent(ctx, FeedsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
+            m.testTag("tile-block"))
+        "settings" -> WatchButton(Symbols.settings, "Honeycomb Settings",
+            act { ctx.startActivity(Intent(ctx, HoneycombSettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
+            m.testTag("tile-settings"))
     }
+}
+
+private fun controlIcon(id: String): Icon = when (id) {
+    "bluetooth" -> Symbols.bluetooth
+    "wifi" -> Symbols.wifi
+    "airplane" -> Symbols.airplane
+    "battery" -> Symbols.batteryFull
+    "silent" -> Symbols.bell
+    "flashlight" -> Symbols.flashlightOn
+    "quiet" -> Symbols.moon
+    "rotation" -> Symbols.rotationLock
+    "volume" -> Symbols.volume
+    "output" -> Symbols.output
+    "brightness" -> Symbols.sun
+    "timer" -> Symbols.timer
+    "calculator" -> Symbols.calculator
+    "camera" -> Symbols.camera
+    "mirroring" -> Symbols.mirroring
+    "hotspot" -> Symbols.hotspot
+    "block" -> Symbols.block
+    else -> Symbols.settings
 }
 
 /** WatchButton's own glyph size, wp, so the flashlight's dark glyph covers its white one exactly. */

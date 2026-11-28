@@ -61,4 +61,12 @@ class ControlGridTest {
         assertEquals(Step.Brightness, SetupFlow.next(setOf(Step.Home, Step.Navigation, Step.Notifications, Step.Quiet, Step.Usage), emptySet()))
         assertEquals(Step.Brightness, SetupFlow.next(emptySet(), Step.entries.toSet() - Step.Brightness))
     }
+
+    @Test fun controlPrefsReorderMovesItemsCleanly() {
+        val base = listOf("bluetooth", "wifi", "airplane", "battery")
+        assertEquals(listOf("wifi", "airplane", "bluetooth", "battery"), ControlPrefs.move(base, 0, 2))
+        assertEquals(base, ControlPrefs.move(base, 1, 1))
+        assertEquals(base, ControlPrefs.move(base, -1, 2))
+        assertTrue(ControlGrid.validIds.containsAll(listOf("block", "settings")))
+    }
 }
