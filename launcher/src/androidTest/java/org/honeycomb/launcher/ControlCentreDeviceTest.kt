@@ -167,8 +167,7 @@ class ControlCentreDeviceTest {
         val p = nm.notificationPolicy
         assertTrue(p.priorityCategories and NotificationManager.Policy.PRIORITY_CATEGORY_CALLS != 0)
         assertEquals(NotificationManager.Policy.PRIORITY_SENDERS_CONTACTS, p.priorityCallSenders)
-        // the tile says it is on and the status capsule above the tiles shows the Quiet moon, as on the watch
-        rule.waitUntil(3_000) { shown("status-quiet") }
+        // the tile says it is on
         rule.onNodeWithTag("tile-quiet").assertContentDescriptionEquals("Quiet, on")
         shot("control-centre-quiet-on")
         if (overflows("control-centre")) { // on a screen tall enough for every tile there is no end to scroll to

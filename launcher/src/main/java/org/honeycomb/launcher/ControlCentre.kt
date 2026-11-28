@@ -426,39 +426,32 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(gapX),
                 verticalArrangement = Arrangement.spacedBy(gapY),
             ) {
-                // Header: watchOS Edit bar (+ / Done) in Edit mode, or compact status capsule only (pure watchOS, no top slider)
-                if (editing || now.charging || now.quiet) {
+                // Header: watchOS Edit bar (+ / Done) in Edit mode only (phone already has a status bar + Battery tile)
+                if (editing) {
                     item(key = "cc-header", span = { GridItemSpan(ControlGrid.COLS) }) {
-                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                            if (editing) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                ) {
-                                    CircleButton(
-                                        icon = Symbols.add,
-                                        contentDescription = "Add control",
-                                        onClick = { showAddSheet = true },
-                                        modifier = Modifier.testTag("control-add"),
-                                        size = 40.dp,
-                                    )
-                                    CapsuleButton(
-                                        text = "Done",
-                                        onClick = {
-                                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                                            editing = false
-                                        },
-                                        modifier = Modifier.testTag("control-done"),
-                                        filled = true,
-                                        height = 40.dp,
-                                        minWidth = 96.dp,
-                                    )
-                                }
-                            } else {
-                                BatteryCapsule(now, pt)
-                                Spacer(Modifier.height(6.dp))
-                            }
+                        Row(
+                            Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            CircleButton(
+                                icon = Symbols.add,
+                                contentDescription = "Add control",
+                                onClick = { showAddSheet = true },
+                                modifier = Modifier.testTag("control-add"),
+                                size = 40.dp,
+                            )
+                            CapsuleButton(
+                                text = "Done",
+                                onClick = {
+                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                    editing = false
+                                },
+                                modifier = Modifier.testTag("control-done"),
+                                filled = true,
+                                height = 40.dp,
+                                minWidth = 96.dp,
+                            )
                         }
                     }
                 }
@@ -662,32 +655,6 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
             }
         }
     } }
-}
-
-/**
- * Compact watchOS-style status pill centred at the top of Control Centre: shows a tight charging bolt + % and/or
- * Quiet moon only when active (never a wide empty grey bar).
- */
-@Composable
-private fun BatteryCapsule(t: Toggles, pt: androidx.compose.ui.unit.Dp) {
-    if (!t.charging && !t.quiet) return
-    val said = buildString { append("battery ${t.battery} percent"); if (t.charging) append(", charging"); if (t.quiet) append(", Quiet on") }
-    Row(
-        Modifier
-            .height(26.dp)
-            .controlSurface(HoneycombColors.button, status = true)
-            .padding(horizontal = 12.dp)
-            .testTag("status")
-            .semantics { contentDescription = said },
-        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (t.charging) {
-            Glyph(Bolt, HoneycombColors.accent, 14.dp, Modifier.testTag("status-charging"))
-            BasicText("${t.battery}%", style = HoneycombType.footnote.copy(color = HoneycombColors.label))
-        }
-        if (t.quiet) Glyph(Symbols.moon, HoneycombColors.accent, 14.dp, Modifier.testTag("status-quiet"))
-    }
 }
 
 /** One control: a glyph-only WatchButton, its tint filling it when on. */

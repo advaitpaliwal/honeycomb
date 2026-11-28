@@ -65,8 +65,7 @@ class ControlGridDeviceTest {
 
     @Test fun everyControlIsAWatchButtonAndNoSliderOrNowPlayingRemains() {
         for (id in ControlGrid.order) assertTrue(id, shown("tile-$id"))
-        for (tag in listOf("cc-media", "cc-connectivity", "slider-brightness", "slider-volume")) assertFalse(tag, shown(tag))
-        assertTrue(shown("status"))
+        for (tag in listOf("cc-media", "cc-connectivity", "slider-brightness", "slider-volume", "status")) assertFalse(tag, shown(tag))
         shot("cc-watch-layout")
     }
 
