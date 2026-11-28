@@ -71,6 +71,7 @@ class LiveUpdate(
             "com.ubercab",
             "com.ubercab.eats",
             "me.lyft.android",
+            "com.waymo.carapp",
             "com.dd.doordash",
             "com.instacart.client",
             "com.grubhub.android",

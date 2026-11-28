@@ -460,6 +460,7 @@ class LauncherActivity : ComponentActivity() {
         if (!waitingForUnlock) {
             homeDepth = AppOrder.savedHomeStart(this).depth
             runCatching { Widgets.host(this).startListening() }
+            runCatching { Quiet.clearSetupDndOnce(this) }
             runCatching { Quiet.ensureMediaAllowed(this) }
             runCatching { AppUpdater.checkIfDue(this) }
         }

@@ -1277,6 +1277,7 @@ class HoneycombSettingsActivity : ComponentActivity() {
                 }
 
                 var homeStart by remember { mutableStateOf(AppOrder.savedHomeStart(this@HoneycombSettingsActivity)) }
+                var quietOn by remember { mutableStateOf(Quiet.isOn(this@HoneycombSettingsActivity)) }
                 var quietMode by remember { mutableStateOf(Quiet.callMode(this@HoneycombSettingsActivity)) }
                 val quietRepeat = remember(quietMode) { Quiet.repeatCallers(this@HoneycombSettingsActivity) }
                 val view = androidx.compose.ui.platform.LocalView.current
@@ -1294,7 +1295,7 @@ class HoneycombSettingsActivity : ComponentActivity() {
                             title = "Home screen",
                             valueText = "${homeStart.label} · ${homeStart.subtitle}",
                             index = 0,
-                            count = 5,
+                            count = 6,
                             glyph = Symbols.apps,
                             showChevron = false,
                             onClick = {
@@ -1307,12 +1308,29 @@ class HoneycombSettingsActivity : ComponentActivity() {
                             modifier = Modifier.testTag("settings-home-start"),
                         )
                     }
+                    item(key = "quiet-toggle") {
+                        CleanSwitchRow(
+                            title = "Quiet mode",
+                            subtitle = if (quietOn) "Notifications & Live Updates silenced" else "Off · All notifications & Live Updates on",
+                            checked = quietOn,
+                            onCheckedChange = { next ->
+                                if (Quiet.set(this@HoneycombSettingsActivity, next)) {
+                                    quietOn = next
+                                    view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                                }
+                            },
+                            index = 1,
+                            count = 6,
+                            glyph = Symbols.moon,
+                            modifier = Modifier.testTag("settings-quiet-toggle"),
+                        )
+                    }
                     item(key = "quiet-calls") {
                         NavSummaryRow(
                             title = "Quiet calls",
                             valueText = Quiet.summary(quietMode, quietRepeat),
-                            index = 1,
-                            count = 5,
+                            index = 2,
+                            count = 6,
                             glyph = Symbols.moon,
                             showChevron = false,
                             onClick = {
@@ -1330,8 +1348,8 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         NavSummaryRow(
                             title = "Setup",
                             valueText = "Permissions & home app",
-                            index = 2,
-                            count = 5,
+                            index = 3,
+                            count = 6,
                             glyph = Symbols.apps,
                             onClick = { startActivity(setup) },
                             modifier = Modifier.testTag("settings-setup"),
@@ -1341,8 +1359,8 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         NavSummaryRow(
                             title = "Block",
                             valueText = "Feeds, apps & websites",
-                            index = 3,
-                            count = 5,
+                            index = 4,
+                            count = 6,
                             glyph = Symbols.block,
                             onClick = { startActivity(Intent(this@HoneycombSettingsActivity, FeedsActivity::class.java)) },
                             modifier = Modifier.testTag("settings-feeds"),
@@ -1352,8 +1370,8 @@ class HoneycombSettingsActivity : ComponentActivity() {
                         NavSummaryRow(
                             title = updateTitle,
                             valueText = updateSubtitle,
-                            index = 4,
-                            count = 5,
+                            index = 5,
+                            count = 6,
                             glyph = Symbols.download,
                             accentActive = updateActive,
                             showChevron = false,

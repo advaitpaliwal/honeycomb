@@ -170,6 +170,16 @@ object Quiet {
         return true
     }
 
+    /** One-time upgrade fix: clears Android 15/16's implicit Honeycomb DND rule left on by setup so notifications & Live Updates show. */
+    fun clearSetupDndOnce(ctx: Context) {
+        val p = prefs(ctx)
+        if (p.getBoolean("migrated_quiet_off_v1", false)) return
+        p.edit().putBoolean("migrated_quiet_off_v1", true).apply()
+        if (granted(ctx) && isOn(ctx)) {
+            nm(ctx).setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+        }
+    }
+
     /** Keeps Android's active DND policy synced (media unmuted + repeat callers + chosen call mode) across upgrades. */
     fun ensureMediaAllowed(ctx: Context) {
         if (!granted(ctx) || !isOn(ctx)) return
