@@ -1661,33 +1661,75 @@ fun BlockedDomainRow(
 }
 
 /**
- * Opal-inspired mindful breathing visualizer for the pre-open pause screen:
- * pure obsidian ground, a whisper-soft atmospheric aura that fades seamlessly to transparent (never a hard bright ball),
- * three delicate concentric hairline breathing rings with staggered organic motion, a precision circular countdown arc,
- * and a dark glass center medallion holding the paused app's icon.
+ * Minimalist ambient breathing canvas (inspired by Opal & one sec):
+ * pure obsidian ground with a soft, full-bleed feathered light tide that rises gently from the bottom on inhale
+ * and recedes calmly on exhale — zero circles, zero radar rings, just soft ambient light and crisp typography.
  */
 @Composable
-fun MindfulBreathOrb(
-    progress: Float,
+fun MindfulBreathBackdrop(
     breath: Float,
     accentColors: List<Color>,
+    modifier: Modifier = Modifier,
+) {
+    val primaryTint = accentColors.getOrElse(1) { HoneycombColors.accent }
+    val glowTint = accentColors.firstOrNull() ?: HoneycombColors.accent
+    val deepTint = accentColors.lastOrNull() ?: HoneycombColors.accent
+
+    androidx.compose.foundation.Canvas(modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+        val b = breath.coerceIn(0f, 1f)
+
+        // Smooth full-bleed rising/falling ambient light wave from the bottom edge (feathered, never a hard shape)
+        val waveTop = h * (0.78f - 0.52f * b)
+        drawRect(
+            brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                colorStops = arrayOf(
+                    0.00f to Color.Transparent,
+                    0.35f to deepTint.copy(alpha = 0.05f + 0.06f * b),
+                    0.72f to primaryTint.copy(alpha = 0.14f + 0.14f * b),
+                    1.00f to glowTint.copy(alpha = 0.22f + 0.18f * b),
+                ),
+                startY = waveTop,
+                endY = h * 1.08f,
+            ),
+            size = size,
+        )
+
+        // Subtle soft central aurora bloom rising with the breath (completely feathered to transparent)
+        val bloomCenter = androidx.compose.ui.geometry.Offset(w * 0.5f, h * (0.96f - 0.34f * b))
+        val bloomRadius = w * (0.85f + 0.35f * b)
+        drawCircle(
+            brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                colorStops = arrayOf(
+                    0.00f to glowTint.copy(alpha = 0.18f + 0.12f * b),
+                    0.48f to primaryTint.copy(alpha = 0.08f + 0.06f * b),
+                    1.00f to Color.Transparent,
+                ),
+                center = bloomCenter,
+                radius = bloomRadius,
+            ),
+            radius = bloomRadius,
+            center = bloomCenter,
+        )
+    }
+}
+
+/** Crisp editorial typography block for the mindful pause screen. */
+@Composable
+fun MindfulPauseCopy(
     appIcon: androidx.compose.ui.graphics.ImageBitmap?,
     label: String,
     phaseTitle: String,
     phaseSubtitle: String,
     modifier: Modifier = Modifier,
 ) {
-    val primaryTint = accentColors.getOrElse(1) { HoneycombColors.accent }
-    val glowTint = accentColors.firstOrNull() ?: HoneycombColors.accent
-    val trackColor = HoneycombColors.label.copy(alpha = 0.12f)
-    val rimColor = HoneycombColors.label.copy(alpha = 0.14f)
-    val coreFill = HoneycombColors.platter
     val titleStyle = TextStyle(
         fontFamily = NativeFont,
         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
-        letterSpacing = (-0.4).sp,
+        fontSize = 30.sp,
+        lineHeight = 36.sp,
+        letterSpacing = (-0.6).sp,
         color = HoneycombColors.label,
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
@@ -1695,149 +1737,27 @@ fun MindfulBreathOrb(
     val subStyle = TextStyle(
         fontFamily = NativeFont,
         fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-        fontSize = 15.sp,
-        lineHeight = 20.sp,
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
         color = HoneycombColors.secondaryLabel,
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
     )
-    val pillStyle = TextStyle(
-        fontFamily = NativeFont,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-        fontSize = 13.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.2.sp,
-        color = HoneycombColors.secondaryLabel,
-        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
-    )
-
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Subtle Opal-style app pill at top of the visualizer
-        Box(
-            Modifier
-                .surface(HoneycombColors.platter, Capsule, rim = false)
-                .border(1.dp, rimColor, Capsule)
-                .padding(horizontal = 14.dp, vertical = 6.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            BasicText(label, style = pillStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (appIcon != null) {
+            androidx.compose.foundation.Image(
+                bitmap = appIcon,
+                contentDescription = label,
+                modifier = Modifier.size(44.dp).clip(Circle),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
+            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
         }
-
-        // Ambient breathing halo + concentric hairline rings + precision sweep arc + obsidian medallion
-        Box(Modifier.size(280.dp), contentAlignment = Alignment.Center) {
-            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                val center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
-                val maxR = size.minDimension / 2f
-                val b = breath.coerceIn(0f, 1f)
-
-                // 1. Whisper-soft atmospheric glow fading completely to transparent (zero hard circle edge)
-                val auraR = maxR * (0.76f + 0.24f * b)
-                drawCircle(
-                    brush = androidx.compose.ui.graphics.Brush.radialGradient(
-                        colorStops = arrayOf(
-                            0.00f to glowTint.copy(alpha = 0.16f + 0.08f * b),
-                            0.42f to primaryTint.copy(alpha = 0.07f + 0.04f * b),
-                            0.78f to primaryTint.copy(alpha = 0.02f),
-                            1.00f to Color.Transparent,
-                        ),
-                        center = center,
-                        radius = auraR,
-                    ),
-                    radius = auraR,
-                    center = center,
-                )
-
-                // 2. Three delicate concentric hairline breathing ripples
-                val ring1R = maxR * (0.64f + 0.14f * b)
-                val ring2R = maxR * (0.76f + 0.16f * b)
-                val ring3R = maxR * (0.88f + 0.11f * b)
-                drawCircle(
-                    color = primaryTint.copy(alpha = 0.24f + 0.14f * b),
-                    radius = ring1R,
-                    center = center,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.25.dp.toPx()),
-                )
-                drawCircle(
-                    color = primaryTint.copy(alpha = 0.13f + 0.08f * b),
-                    radius = ring2R,
-                    center = center,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()),
-                )
-                drawCircle(
-                    color = glowTint.copy(alpha = 0.06f + 0.05f * b),
-                    radius = ring3R,
-                    center = center,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 0.85.dp.toPx()),
-                )
-
-                // 3. Precision circular progress ring around the center medallion
-                val arcR = 66.dp.toPx()
-                val arcStroke = 2.25.dp.toPx()
-                val topLeft = androidx.compose.ui.geometry.Offset(center.x - arcR, center.y - arcR)
-                val arcSize = androidx.compose.ui.geometry.Size(arcR * 2f, arcR * 2f)
-                drawArc(
-                    color = trackColor,
-                    startAngle = -90f,
-                    sweepAngle = 360f,
-                    useCenter = false,
-                    topLeft = topLeft,
-                    size = arcSize,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = arcStroke),
-                )
-                val sweep = (progress.coerceIn(0f, 1f)) * 360f
-                if (sweep > 0.5f) {
-                    drawArc(
-                        brush = androidx.compose.ui.graphics.Brush.sweepGradient(
-                            colors = listOf(glowTint, primaryTint, glowTint),
-                            center = center,
-                        ),
-                        startAngle = -90f,
-                        sweepAngle = sweep,
-                        useCenter = false,
-                        topLeft = topLeft,
-                        size = arcSize,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(
-                            width = arcStroke,
-                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                        ),
-                    )
-                }
-            }
-
-            // 4. Dark obsidian glass medallion holding the app's icon cleanly (never a bright filled disc)
-            Box(
-                Modifier
-                    .size(104.dp)
-                    .clip(Circle)
-                    .background(coreFill)
-                    .border(1.dp, rimColor, Circle),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (appIcon != null) {
-                    androidx.compose.foundation.Image(
-                        bitmap = appIcon,
-                        contentDescription = label,
-                        modifier = Modifier.size(56.dp).clip(Circle),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    )
-                } else {
-                    Glyph(Symbols.block, HoneycombColors.label, 34.dp)
-                }
-            }
-        }
-
-        // Calm Opal-style breathing guidance directly under the orb
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.padding(horizontal = 24.dp),
-        ) {
-            BasicText(phaseTitle, style = titleStyle)
-            BasicText(phaseSubtitle, style = subStyle)
-        }
+        BasicText(phaseTitle, style = titleStyle)
+        BasicText(phaseSubtitle, style = subStyle)
     }
 }

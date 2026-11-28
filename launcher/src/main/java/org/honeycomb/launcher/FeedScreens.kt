@@ -120,94 +120,98 @@ class FeedPauseActivity : ComponentActivity() {
     }
 }
 
-/** Opal-inspired mindful pause: whisper-soft concentric breathing rings + smooth progress arc + calm prompt. */
+/** Full-bleed ambient breath wave (rising on inhale, receding on exhale) with clean centered typography. */
 @Composable
 private fun PauseScreen(label: String, icon: ImageBitmap?, onOpen: () -> Unit, onNotNow: () -> Unit) {
     val reduce = HoneycombTheme.reduceMotion
     val view = LocalView.current
     val progress = remember { Animatable(0f) }
+    val breath = remember { Animatable(0f) }
     var ready by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (reduce) {
+            breath.snapTo(0.45f)
             delay(Motion.BREATH_MS)
             progress.snapTo(1f)
         } else {
             val half = (Motion.BREATH_MS / 2).toInt()
-            progress.animateTo(0.5f, tween(durationMillis = half, easing = LinearEasing))
+            // Inhale: soft ambient wave rises smoothly up the screen
+            kotlinx.coroutines.coroutineScope {
+                launch { progress.animateTo(0.5f, tween(durationMillis = half, easing = LinearEasing)) }
+                launch { breath.animateTo(1f, tween(durationMillis = half, easing = FastOutSlowInEasing)) }
+            }
             view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-            progress.animateTo(1f, tween(durationMillis = half, easing = LinearEasing))
+            // Exhale: wave recedes calmly back down into pure black
+            kotlinx.coroutines.coroutineScope {
+                launch { progress.animateTo(1f, tween(durationMillis = half, easing = LinearEasing)) }
+                launch { breath.animateTo(0.18f, tween(durationMillis = half, easing = FastOutSlowInEasing)) }
+            }
         }
         ready = true
         view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
     }
 
-    val breath = rememberInfiniteTransition(label = "breath")
-    val breathPhase by breath.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            tween(durationMillis = (Motion.BREATH_MS / 2).toInt(), easing = FastOutSlowInEasing),
-            RepeatMode.Reverse,
-        ),
-        label = "breath-phase",
-    )
-    val b = if (reduce) 0.5f else breathPhase
     val secsLeft = kotlin.math.ceil(((1f - progress.value) * Motion.BREATH_MS) / 1000.0).toInt().coerceAtLeast(1)
     val phaseTitle = when {
         ready -> "Open $label?"
         progress.value < 0.5f -> "Take a deep breath"
-        else -> "And let it out"
+        else -> "And breathe out"
     }
     val phaseSubtitle = when {
         ready -> "Still worth your time?"
-        progress.value < 0.5f -> "Inhale slowly · ${secsLeft}s"
-        else -> "Exhale slowly · ${secsLeft}s"
+        progress.value < 0.5f -> "Inhale slowly"
+        else -> "Exhale slowly"
     }
 
-    ScreenFrame(Modifier.testTag("feed-pause")) {
-        Column(
-            Modifier.fillMaxSize().padding(bottom = Space.l),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                MindfulBreathOrb(
-                    progress = progress.value,
-                    breath = b,
-                    accentColors = BreathPalette.gradient,
-                    appIcon = icon,
-                    label = label,
-                    phaseTitle = phaseTitle,
-                    phaseSubtitle = phaseSubtitle,
-                )
-            }
-
+    HoneycombTheme {
+        Backdrop(Modifier.testTag("feed-pause")) {
+            MindfulBreathBackdrop(
+                breath = breath.value,
+                accentColors = BreathPalette.gradient,
+            )
             Column(
-                Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(ButtonSize.stackGap),
+                Modifier
+                    .fillMaxSize()
+                    .safeDrawingPadding()
+                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Always allow bailing out immediately (just like Opal)
-                CapsuleButton(
-                    text = "Not now",
-                    onClick = onNotNow,
-                    modifier = Modifier.fillMaxWidth().testTag("feed-Not now"),
-                    height = ButtonSize.large,
-                    filled = true,
-                )
-                if (ready) {
-                    CapsuleButton(
-                        text = "Open $label",
-                        onClick = onOpen,
-                        modifier = Modifier.fillMaxWidth().testTag("feed-Open"),
-                        height = ButtonSize.large,
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    MindfulPauseCopy(
+                        appIcon = icon,
+                        label = label,
+                        phaseTitle = phaseTitle,
+                        phaseSubtitle = phaseSubtitle,
                     )
-                } else {
+                }
+
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(ButtonSize.stackGap),
+                ) {
                     CapsuleButton(
-                        text = "Wait ${secsLeft}s",
-                        onClick = {},
-                        modifier = Modifier.fillMaxWidth().alpha(0.45f),
+                        text = "Not now",
+                        onClick = onNotNow,
+                        modifier = Modifier.fillMaxWidth().testTag("feed-Not now"),
                         height = ButtonSize.large,
+                        filled = true,
                     )
+                    if (ready) {
+                        CapsuleButton(
+                            text = "Open $label",
+                            onClick = onOpen,
+                            modifier = Modifier.fillMaxWidth().testTag("feed-Open"),
+                            height = ButtonSize.large,
+                        )
+                    } else {
+                        CapsuleButton(
+                            text = "Wait ${secsLeft}s",
+                            onClick = {},
+                            modifier = Modifier.fillMaxWidth().alpha(0.45f),
+                            height = ButtonSize.large,
+                        )
+                    }
                 }
             }
         }
