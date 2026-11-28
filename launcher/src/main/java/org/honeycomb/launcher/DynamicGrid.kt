@@ -28,11 +28,12 @@ import java.time.ZoneId
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
+import kotlin.math.sqrt
 
 /** How far the face behind the dynamic grid blurs, watch px on watchOS's 422 px wide simulator screen (clip 01). */
 internal const val FACE_BLUR_PX = 26f
 
-// ---- zero-hardcoding real-time on-device intelligence engine (<1 ms inference, online FTRL + passive-negative) ----
+// ---- zero-hardcoding OS-level on-device ML engine (FTRL-Proximal + AUC-PA + Thompson/UCB Bandit, <1 ms) ----
 
 private const val COUNTS = "launch_counts"
 private const val CONTEXT_PREFS = "launch_context"
@@ -40,6 +41,10 @@ private const val KEY_HISTORY = "history_v1"
 private const val KEY_LAST_NET_ID = "last_net_id_v2"
 private const val KEY_LAST_NET_CHANGE_MS = "last_net_change_ms_v2"
 private const val KEY_LAST_NET_SAMPLE_MS = "last_net_sample_ms_v2"
+private const val KEY_LAST_HP_STATE = "last_hp_state_v1"
+private const val KEY_LAST_HP_CHANGE_MS = "last_hp_change_ms_v1"
+private const val KEY_LAST_CHG_STATE = "last_chg_state_v1"
+private const val KEY_LAST_CHG_CHANGE_MS = "last_chg_change_ms_v1"
 private const val KEY_LAST_LAUNCH_MS = "last_launch_ms_v2"
 private const val MAX_LOCAL_HISTORY = 320
 private const val MAX_ONLINE_WEIGHTS = 700
@@ -52,6 +57,8 @@ private const val FAST_BURST_HALF_LIFE_MS = 18.0 * 60_000.0        // 18 min: ac
 private const val SLOW_HABIT_HALF_LIFE_MS = 72.0 * 3600_000.0      // 72 hr: steady weekly staples
 private const val MARKOV_CHAIN_GAP_MS = 3.0 * 60_000.0             // 3 min max gap between consecutive apps in a session
 private const val MARKOV_RECENCY_WINDOW_MS = 10.0 * 60_000.0       // last app stays predictive for 10 min
+private const val SESSION_CO_WINDOW_MS = 20 * 60_000L              // 20 min multi-app workflow co-occurrence window
+private const val TRANSITION_EDGE_WINDOW_MS = 15 * 60_000L         // 15 min transition edge window (EverythingMe §6.1)
 private const val TOD_SIGMA_HOURS = 1.5                            // smooth circular Gaussian kernel (+/- 1.5 hr)
 private const val NOTIF_IMPORTANT_HALF_LIFE_MS = 45.0 * 60_000.0     // 45 min: real messages, calls, priority alerts stay urgent
 private const val NOTIF_NORMAL_HALF_LIFE_MS = 18.0 * 60_000.0        // 18 min: standard app alerts
@@ -64,10 +71,11 @@ private const val W_BURST = 2.2
 private const val W_HABIT = 1.0
 private const val W_MARKOV = 1.8
 private const val W_TRIGRAM = 1.3
+private const val W_COOCCUR = 0.85
 private const val W_TOD = 1.2
 private const val W_CALENDAR = 0.75
 private const val W_CONTEXT = 1.25
-private const val W_ONLINE = 1.6
+private const val W_ONLINE = 1.75
 private const val W_NOTIF = 2.6
 private const val W_LIVE = 2.5
 private const val W_MEDIA_ACTIVE = 1.4
@@ -157,10 +165,16 @@ data class DeviceContext(
     val alarmSoon: Boolean = false,      // true when an alarm clock is scheduled within 45 min
     val quietOn: Boolean = false,        // true when Do Not Disturb / Quiet focus mode is active
     val activeMediaPkg: String? = null,  // package actively playing audio right now (STATE_PLAYING)
+    val btAudioId: String = "",          // anonymized Bluetooth output fingerprint (AirPods vs car vs desk speaker)
+    val chargeSource: String = "",       // "wireless", "usb", "ac", or ""
+    val hpChangedAtMs: Long = 0L,        // timestamp of last headphones connect/disconnect transition
+    val chgChangedAtMs: Long = 0L,       // timestamp of last charger plug/unplug transition
+    val justUnlocked: Boolean = false,   // true on first app open right after screen unlock / keyguard hide
 ) {
     /**
      * Dynamic sparse feature tokens representing this exact moment (zero hardcoded app names).
-     * Combines semantic place role, stay duration, device environment, and temporal/calendar cycles + crosses.
+     * Combines semantic place role, stay duration, hardware fingerprints, 15-min transition edges
+     * (EverythingMe §6.1), device environment, and temporal/calendar cycles + crosses.
      */
     fun activeBuckets(nowMs: Long = 0L, zoneId: ZoneId = ZoneId.systemDefault()): List<String> = buildList {
         val netBase = if (onWifi) "net_wifi" else "net_away"
@@ -177,12 +191,28 @@ data class DeviceContext(
             add("netid_$networkId")
         }
         if (headphonesConnected) add("audio_hp")
+        if (btAudioId.isNotEmpty()) add("bt_$btAudioId")
         if (carAudioConnected) add("audio_car")
         if (mediaPlaying) add("media_on")
         if (charging) add("pwr_chg")
+        if (chargeSource.isNotEmpty()) add("chg_$chargeSource")
         if (powerSave) add("pwr_save")
         if (alarmSoon) add("alarm_soon")
         if (quietOn) add("dnd_on")
+        if (justUnlocked) add("edge_unlock")
+
+        // 15-minute hardware & place transition edge tokens (highest-AUC mobile signals per arXiv:1512.07851)
+        if (nowMs > 0L) {
+            if (hpChangedAtMs in 1L..nowMs && (nowMs - hpChangedAtMs) <= TRANSITION_EDGE_WINDOW_MS) {
+                add(if (headphonesConnected) "edge_hp_in" else "edge_hp_out")
+            }
+            if (chgChangedAtMs in 1L..nowMs && (nowMs - chgChangedAtMs) <= TRANSITION_EDGE_WINDOW_MS) {
+                add(if (charging) "edge_chg_in" else "edge_chg_out")
+            }
+            if (networkChangedAtMs in 1L..nowMs && (nowMs - networkChangedAtMs) <= TRANSITION_EDGE_WINDOW_MS) {
+                add(if (onWifi) "edge_net_in_$placeRole" else "edge_net_out")
+            }
+        }
         add("bat_$batteryBucket")
         add("bri_$brightnessBucket")
         add("vol_$volumeBucket")
@@ -299,10 +329,22 @@ data class FatigueState(
     val updatedAtMs: Long,
 )
 
-/** Result of contextual ranking: ordered package list (best first) + raw numeric score per package for hysteresis. */
+/**
+ * Result of contextual ranking:
+ *  - [ordered]: best exploitation apps first
+ *  - [scores]: raw numeric score per package for spatial hysteresis & Smart Stack
+ *  - [exploreCandidate]: optional outer-slot Thompson/UCB contextual bandit probe (null when no exploration needed)
+ */
 data class ContextualRanking(
     val ordered: List<String>,
     val scores: Map<String, Double>,
+    val exploreCandidate: String? = null,
+)
+
+/** Per-app contextual bandit stats (impressions shown, taps chosen) for Bayesian UCB / Thompson exploration. */
+data class BanditStats(
+    val impressions: Int = 0,
+    val taps: Int = 0,
 )
 
 /**
@@ -350,6 +392,8 @@ fun rankContextualPackages(
     zoneId: ZoneId = ZoneId.systemDefault(),
     onlineWeights: Map<String, Map<String, Double>> = emptyMap(),
     fatigue: Map<String, FatigueState> = emptyMap(),
+    installedPackages: List<String> = emptyList(),
+    banditStats: Map<String, BanditStats> = emptyMap(),
 ): ContextualRanking {
     val ln2 = ln(2.0)
     val sorted = events
@@ -449,6 +493,44 @@ fun rankContextualPackages(
         }
     }
 
+    // Signal 3b: Multi-app session skip-gram co-occurrence across the last 4 distinct apps in the current 20-min session
+    val sessionCo = HashMap<String, Double>()
+    val recentSessionPkgs = sorted.asReversed()
+        .takeWhile { (nowMs - it.timestampMs) <= SESSION_CO_WINDOW_MS }
+        .map { it.pkg }
+        .distinct()
+        .take(4)
+        .toSet()
+    if (recentSessionPkgs.isNotEmpty() && sorted.size >= 3) {
+        val coHits = HashMap<String, Int>()
+        var sessMatches = 0
+        var i = 0
+        while (i < sorted.size) {
+            var j = i + 1
+            while (j < sorted.size && (sorted[j].timestampMs - sorted[j - 1].timestampMs) <= SESSION_CO_WINDOW_MS) j++
+            val sessionSet = HashSet<String>(j - i)
+            for (k in i until j) sessionSet.add(sorted[k].pkg)
+            var overlap = 0
+            for (r in recentSessionPkgs) if (r in sessionSet) overlap++
+            if (overlap > 0) {
+                sessMatches++
+                for (p in sessionSet) {
+                    if (p !in recentSessionPkgs) {
+                        coHits.merge(p, overlap, Int::plus)
+                    }
+                }
+            }
+            i = j
+        }
+        if (sessMatches > 0) {
+            val denom = sessMatches + 2.0
+            for ((p, h) in coHits) {
+                candidates.add(p)
+                sessionCo[p] = (h.toDouble() / denom).coerceAtMost(1.5)
+            }
+        }
+    }
+
     // Signal 5: Multi-signal passive device + moment context log-lift (both positive AND negative lift!)
     val contextLift = HashMap<String, Double>()
     val activeBuckets = ctx.activeBuckets(nowMs, zoneId)
@@ -541,6 +623,7 @@ fun rankContextualPackages(
         val sHabit = ln(1.0 + (habit[pkg] ?: 0.0) * 0.45)
         val sMarkov = markov[pkg] ?: 0.0
         val sTrigram = trigram[pkg] ?: 0.0
+        val sCooccur = sessionCo[pkg] ?: 0.0
         val sTod = ln(1.0 + (tod[pkg] ?: 0.0))
         val sCal = ln(1.0 + (calMatch[pkg] ?: 0.0))
         val sCtx = (contextLift[pkg] ?: 0.0).coerceIn(-1.2, 2.8)
@@ -568,6 +651,7 @@ fun rankContextualPackages(
             W_HABIT * sHabit +
             W_MARKOV * sMarkov +
             W_TRIGRAM * sTrigram +
+            W_COOCCUR * sCooccur +
             W_TOD * sTod +
             W_CALENDAR * sCal +
             W_CONTEXT * sCtx +
@@ -584,34 +668,110 @@ fun rankContextualPackages(
     val ordered = scores.entries
         .sortedWith(compareBy({ -it.value }, { it.key }))
         .map { it.key }
-    return ContextualRanking(ordered, scores)
+
+    // Signal 9: Controlled Bayesian UCB + 20-min Thompson Exploration (Reels/TikTok-style probing)
+    // Picks at most ONE under-explored installed app outside the top 6 so the OS actively tests
+    // hypotheses in an outer slot and learns from how you react — without ever touching top 5 stability.
+    val exploreCandidate = pickExploreCandidate(
+        installedPackages = installedPackages,
+        topExploit = ordered.take(6).toSet(),
+        scores = scores,
+        onlineScore = onlineScore,
+        fatigue = fatigue,
+        banditStats = banditStats,
+        nowMs = nowMs,
+        selfPkg = selfPkg,
+    )
+    return ContextualRanking(ordered, scores, exploreCandidate)
 }
 
 /**
- * Pure online logistic gradient update (L2-regularized SGD) for both positive launches (y=1)
- * and passive-negative skipped impressions (y=0, gentler weight per RecSys 2023 SINE).
+ * Selects a single controlled contextual bandit exploration candidate (Bayesian UCB + deterministic
+ * 20-min Thompson window jitter so it stays rock-steady for 20 min and then rotates smoothly).
+ */
+internal fun pickExploreCandidate(
+    installedPackages: List<String>,
+    topExploit: Set<String>,
+    scores: Map<String, Double>,
+    onlineScore: Map<String, Double>,
+    fatigue: Map<String, FatigueState>,
+    banditStats: Map<String, BanditStats>,
+    nowMs: Long,
+    selfPkg: String,
+): String? {
+    if (installedPackages.size <= 7) return null
+    val ln2 = ln(2.0)
+    val totalImp = banditStats.values.sumOf { it.impressions }.coerceAtLeast(1).toDouble()
+    val windowBucket = (nowMs / (20 * 60_000L)).toInt()
+
+    var bestPkg: String? = null
+    var bestUcb = Double.NEGATIVE_INFINITY
+    for (pkg in installedPackages) {
+        if (pkg.isEmpty() || pkg == selfPkg || pkg in topExploit) continue
+        // Never probe an app the user recently skipped or strongly dislikes in this context
+        if ((onlineScore[pkg] ?: 0.0) < -0.35) continue
+        val f = fatigue[pkg]
+        if (f != null && f.count > 0.0 && f.updatedAtMs <= nowMs) {
+            val decayed = f.count * exp(-ln2 * (nowMs - f.updatedAtMs).coerceAtLeast(0L).toDouble() / FATIGUE_HALF_LIFE_MS)
+            if (decayed >= 0.3) continue
+        }
+        val st = banditStats[pkg] ?: BanditStats()
+        val meanCtr = (st.taps + 1.0) / (st.impressions + 3.0)
+        val uncertainty = sqrt(ln(2.0 + totalImp) / (1.0 + st.impressions))
+        val contextHint = ln(1.0 + (scores[pkg] ?: 0.0).coerceAtLeast(0.0)) * 0.25
+        // Deterministic per-20-min pseudo-Thompson draw in [0, 0.45] so different uncertain apps get tested across windows
+        val mix = ((pkg.hashCode() * 1103515245) xor (windowBucket * 2654435761L.toInt())).toUInt()
+        val thompsonJitter = ((mix % 1000u).toDouble() / 1000.0) * 0.45
+        val ucb = meanCtr + 0.55 * uncertainty + contextHint + thompsonJitter
+        if (ucb > bestUcb) {
+            bestUcb = ucb
+            bestPkg = pkg
+        }
+    }
+    return bestPkg
+}
+
+/**
+ * FTRL-Proximal inspired per-coordinate adaptive online logistic update with L1 sparsity
+ * (McMahan et al., KDD 2013) + optional pairwise AUC-PA margin boost (EverythingMe arXiv:1512.07851):
+ *  - Rare high-signal features (e.g. just-plugged headphones, wireless nightstand charger, alarm soon)
+ *    converge in 2-3 taps via adaptive per-feature learning rate 1 / (1 + sqrt(n)).
+ *  - Noisy ubiquitous features are automatically shrunk toward 0 by L1 soft-thresholding.
  */
 internal fun updateOnlineWeights(
     weights: MutableMap<String, MutableMap<String, Double>>,
     pkg: String,
     activeBuckets: List<String>,
     positive: Boolean,
-    lr: Double = if (positive) 0.18 else 0.08,
-    l2: Double = 0.005,
+    lr: Double = if (positive) 0.26 else 0.11,
+    l2: Double = 0.004,
+    l1: Double = 0.006,
+    gradAccum: MutableMap<String, MutableMap<String, Double>>? = null,
+    marginScale: Double = 1.0,
 ) {
     val wMap = weights.getOrPut(pkg) { HashMap() }
+    val nMap = gradAccum?.getOrPut(pkg) { HashMap() }
     var z = wMap["_bias"] ?: 0.0
     for (f in activeBuckets) z += wMap[f] ?: 0.0
     val pred = sigmoid(z)
     val target = if (positive) 1.0 else 0.0
-    val err = target - pred
+    val err = (target - pred) * marginScale
 
     val nextBias = ((wMap["_bias"] ?: 0.0) * (1.0 - l2) + lr * 0.5 * err).coerceIn(-3.0, 3.0)
     wMap["_bias"] = nextBias
     for (f in activeBuckets) {
+        val nPrev = nMap?.get(f) ?: 0.0
+        val effLr = lr / (1.0 + sqrt(nPrev) * 0.65)
         val cur = wMap[f] ?: 0.0
-        val next = (cur * (1.0 - l2) + lr * err).coerceIn(-3.5, 3.5)
-        wMap[f] = next
+        val raw = cur * (1.0 - l2) + effLr * err
+        // L1 soft-thresholding (FTRL sparsity: keeps genuinely predictive context features, zeroes out noise)
+        val shrunk = when {
+            raw > l1 -> raw - l1
+            raw < -l1 -> raw + l1
+            else -> 0.0
+        }.coerceIn(-3.5, 3.5)
+        wMap[f] = shrunk
+        if (nMap != null) nMap[f] = (nPrev + err * err).coerceAtMost(200.0)
     }
 }
 
@@ -657,13 +817,21 @@ fun readDeviceContext(ctx: Context): DeviceContext {
     val lastSampleMs = cPrefs.getLong(KEY_LAST_NET_SAMPLE_MS, 0L)
     val profiles = readNetworkProfiles(ctx).toMutableMap()
 
-    // Read charging early so overnight/charging dwell is credited accurately
+    // Read charging early (including wireless vs USB vs AC source!) so overnight/charging dwell is credited accurately
     var charging = false
+    var chargeSource = ""
     var batteryBucket = 1
     runCatching {
         val intent = ctx.registerReceiver(null, IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
         val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        val plugged = intent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+        chargeSource = when {
+            plugged and BatteryManager.BATTERY_PLUGGED_WIRELESS != 0 -> "wireless"
+            plugged and BatteryManager.BATTERY_PLUGGED_USB != 0 -> "usb"
+            plugged and BatteryManager.BATTERY_PLUGGED_AC != 0 -> "ac"
+            else -> ""
+        }
         val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100)?.coerceAtLeast(1) ?: 100
         if (level >= 0) {
@@ -721,6 +889,7 @@ fun readDeviceContext(ctx: Context): DeviceContext {
     val stayDurationMin = if (netChangedAt in 1L..now) (now - netChangedAt) / 60_000L else 30L
 
     var headphones = false
+    var btAudioId = ""
     var carAudio = false
     var mediaPlaying = false
     var volumeBucket = 1
@@ -739,6 +908,16 @@ fun readDeviceContext(ctx: Context): DeviceContext {
                     AudioDeviceInfo.TYPE_USB_HEADSET -> true
                     else -> false
                 }
+            }
+            // Anonymized Bluetooth output device fingerprint (AirPods vs Car stereo vs Desk headphones, zero BT permission)
+            val btDev = outputs.firstOrNull { d ->
+                d.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    d.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                    d.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            }
+            val btName = btDev?.productName?.toString()?.trim().orEmpty()
+            if (btName.isNotEmpty()) {
+                btAudioId = (btName.hashCode().toUInt()).toString(16)
             }
             mediaPlaying = am.isMusicActive
             ringerMode = am.ringerMode
@@ -785,6 +964,26 @@ fun readDeviceContext(ctx: Context): DeviceContext {
     val quietOn = runCatching { Quiet.isOn(ctx) }.getOrDefault(false)
     val activeMediaPkg = runCatching { currentMedia(ctx)?.takeIf { it.playing }?.pkg }.getOrNull()
 
+    // Track hardware transition edges (headphones connect/disconnect, charger plug/unplug)
+    val prevHp = cPrefs.getInt(KEY_LAST_HP_STATE, -1)
+    val curHp = if (headphones) 1 else 0
+    var hpChangedAt = cPrefs.getLong(KEY_LAST_HP_CHANGE_MS, 0L)
+    val prevChg = cPrefs.getInt(KEY_LAST_CHG_STATE, -1)
+    val curChg = if (charging) 1 else 0
+    var chgChangedAt = cPrefs.getLong(KEY_LAST_CHG_CHANGE_MS, 0L)
+    if (prevHp != curHp || prevChg != curChg) {
+        val edgeEdit = cPrefs.edit()
+        if (prevHp != curHp) {
+            if (prevHp != -1) hpChangedAt = now
+            edgeEdit.putInt(KEY_LAST_HP_STATE, curHp).putLong(KEY_LAST_HP_CHANGE_MS, hpChangedAt)
+        }
+        if (prevChg != curChg) {
+            if (prevChg != -1) chgChangedAt = now
+            edgeEdit.putInt(KEY_LAST_CHG_STATE, curChg).putLong(KEY_LAST_CHG_CHANGE_MS, chgChangedAt)
+        }
+        edgeEdit.apply()
+    }
+
     return DeviceContext(
         onWifi = onWifi,
         headphonesConnected = headphones,
@@ -805,6 +1004,10 @@ fun readDeviceContext(ctx: Context): DeviceContext {
         alarmSoon = alarmSoon,
         quietOn = quietOn,
         activeMediaPkg = activeMediaPkg,
+        btAudioId = btAudioId,
+        chargeSource = chargeSource,
+        hpChangedAtMs = hpChangedAt,
+        chgChangedAtMs = chgChangedAt,
     )
 }
 
@@ -933,9 +1136,26 @@ fun recordLaunch(
         editor.putInt(k, cPrefs.getInt(k, 0) + 1)
     }
 
-    // Real-time online logistic weights + passive-negative impression fatigue
+    // FTRL-Proximal adaptive online weights + pairwise AUC-PA margin boost + contextual bandit stats + fatigue
     val weights = readOnlineWeights(ctx).mapValues { it.value.toMutableMap() }.toMutableMap()
-    updateOnlineWeights(weights, pkg, activeBuckets, positive = true)
+    val gradAccum = readOnlineAccum(ctx).mapValues { it.value.toMutableMap() }.toMutableMap()
+    val skipped = shownDynamicPkgs.asSequence().filter { it.isNotEmpty() && it != pkg && it != ctx.packageName }.distinct().toList()
+
+    // Pairwise AUC-PA margin check: if the chosen app scored below the top skipped Dynamic Grid app, amplify update
+    fun logitOf(p: String): Double {
+        val m = weights[p] ?: return 0.0
+        var z = m["_bias"] ?: 0.0
+        for (f in activeBuckets) z += m[f] ?: 0.0
+        return z
+    }
+    val chosenZ = logitOf(pkg)
+    val topSkippedZ = skipped.maxOfOrNull { logitOf(it) } ?: chosenZ
+    val marginScale = if (skipped.isNotEmpty() && (chosenZ - topSkippedZ) < 1.0) 1.45 else 1.0
+
+    updateOnlineWeights(weights, pkg, activeBuckets, positive = true, gradAccum = gradAccum, marginScale = marginScale)
+    // Record bandit positive reward (tap + impression)
+    editor.putInt("bt:$pkg", cPrefs.getInt("bt:$pkg", 0) + 1)
+    editor.putInt("bi:$pkg", cPrefs.getInt("bi:$pkg", 0) + 1)
     // Clear fatigue on the app the user actually chose
     editor.remove("f:$pkg")
 
@@ -956,9 +1176,10 @@ fun recordLaunch(
 
     val ln2 = ln(2.0)
     val prevFatigue = readFatigue(ctx)
-    val skipped = shownDynamicPkgs.asSequence().filter { it.isNotEmpty() && it != pkg && it != ctx.packageName }.distinct().toList()
     for (sk in skipped) {
-        updateOnlineWeights(weights, sk, activeBuckets, positive = false)
+        val skMargin = if (logitOf(sk) >= chosenZ - 0.5) 1.35 else 1.0
+        updateOnlineWeights(weights, sk, activeBuckets, positive = false, gradAccum = gradAccum, marginScale = skMargin)
+        editor.putInt("bi:$sk", cPrefs.getInt("bi:$sk", 0) + 1)
         if (sk in activeNotifPkgs) {
             editor.putInt("nd:$sk", cPrefs.getInt("nd:$sk", 0) + 1)
         }
@@ -970,16 +1191,20 @@ fun recordLaunch(
         editor.putString("f:$sk", "$nextCount@$now")
     }
 
-    // Persist compact online weights (prune weakest entries if > MAX_ONLINE_WEIGHTS)
+    // Persist compact FTRL weights & accumulators (prune weakest entries if > MAX_ONLINE_WEIGHTS)
     val allEntries = weights.flatMap { (p, m) -> m.entries.map { (f, w) -> Triple(p, f, w) } }
     val kept = if (allEntries.size > MAX_ONLINE_WEIGHTS) {
         allEntries.sortedByDescending { abs(it.third) }.take(MAX_ONLINE_WEIGHTS)
     } else allEntries
     for (k in cPrefs.all.keys) {
-        if (k.startsWith("w:")) editor.remove(k)
+        if (k.startsWith("w:") || k.startsWith("n:")) editor.remove(k)
     }
     for ((p, f, w) in kept) {
-        if (abs(w) >= 0.01) editor.putFloat("w:$p|$f", w.toFloat())
+        if (abs(w) >= 0.01) {
+            editor.putFloat("w:$p|$f", w.toFloat())
+            val acc = gradAccum[p]?.get(f) ?: 0.0
+            if (acc > 0.01) editor.putFloat("n:$p|$f", acc.toFloat())
+        }
     }
     editor.apply()
 }
@@ -991,38 +1216,48 @@ private fun usageGranted(ctx: Context): Boolean {
 }
 
 /**
- * Reads UsageEvents over the last 7 days and pairs ACTIVITY_RESUMED -> ACTIVITY_PAUSED/STOPPED
- * to measure true dwell time per launch (so quick 6-second bounces never look like deep sessions).
+ * Reads UsageEvents over the last 7 days, pairs ACTIVITY_RESUMED -> ACTIVITY_PAUSED/STOPPED for dwell duration,
+ * and also checks whether the user just unlocked the screen (KEYGUARD_HIDDEN / SCREEN_INTERACTIVE) with no app opened yet.
  */
-private fun readUsageEvents(ctx: Context, nowMs: Long): List<LaunchEvent>? {
-    if (!usageGranted(ctx)) return null
-    val usm = ctx.getSystemService(UsageStatsManager::class.java) ?: return null
-    val events = usm.queryEvents(nowMs - USE_WINDOW_MS, nowMs) ?: return null
+private fun readUsageSnapshot(ctx: Context, nowMs: Long): Pair<List<LaunchEvent>?, Boolean> {
+    if (!usageGranted(ctx)) return null to false
+    val usm = ctx.getSystemService(UsageStatsManager::class.java) ?: return null to false
+    val events = usm.queryEvents(nowMs - USE_WINDOW_MS, nowMs) ?: return null to false
     val out = ArrayList<LaunchEvent>(256)
     val openAt = HashMap<String, Long>()
+    var lastUnlockMs = 0L
+    var lastNonSelfLaunchMs = 0L
+    val selfPkg = ctx.packageName
     val e = UsageEvents.Event()
     while (events.getNextEvent(e)) {
         val pkg = e.packageName
-        if (pkg.isNullOrEmpty()) continue
         when (e.eventType) {
+            UsageEvents.Event.KEYGUARD_HIDDEN, UsageEvents.Event.SCREEN_INTERACTIVE -> {
+                if (e.timeStamp > lastUnlockMs) lastUnlockMs = e.timeStamp
+            }
             UsageEvents.Event.ACTIVITY_RESUMED -> {
-                openAt[pkg] = e.timeStamp
+                if (!pkg.isNullOrEmpty()) {
+                    openAt[pkg] = e.timeStamp
+                    if (pkg != selfPkg && e.timeStamp > lastNonSelfLaunchMs) lastNonSelfLaunchMs = e.timeStamp
+                }
             }
             UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.ACTIVITY_STOPPED -> {
-                val start = openAt.remove(pkg)
-                if (start != null) {
-                    val dwell = (e.timeStamp - start).coerceIn(500L, 4 * 3600_000L)
-                    out.add(LaunchEvent(pkg, start, dwell))
+                if (!pkg.isNullOrEmpty()) {
+                    val start = openAt.remove(pkg)
+                    if (start != null) {
+                        val dwell = (e.timeStamp - start).coerceIn(500L, 4 * 3600_000L)
+                        out.add(LaunchEvent(pkg, start, dwell))
+                    }
                 }
             }
         }
     }
-    // Any currently-foreground app still open right now counts as a committed active session
     for ((pkg, start) in openAt) {
         val dwell = (nowMs - start).coerceIn(15_000L, 4 * 3600_000L)
         out.add(LaunchEvent(pkg, start, dwell))
     }
-    return out
+    val justUnlocked = lastUnlockMs > 0L && (nowMs - lastUnlockMs) <= 90_000L && lastNonSelfLaunchMs < lastUnlockMs
+    return out to justUnlocked
 }
 
 private fun readLocalHistory(ctx: Context): List<LaunchEvent> {
@@ -1062,6 +1297,37 @@ private fun readOnlineWeights(ctx: Context): Map<String, Map<String, Double>> {
         out.getOrPut(pkg) { HashMap() }[feat] = w
     }
     return out
+}
+
+private fun readOnlineAccum(ctx: Context): Map<String, Map<String, Double>> {
+    val all = ctx.getSharedPreferences(CONTEXT_PREFS, Context.MODE_PRIVATE).all
+    val out = HashMap<String, MutableMap<String, Double>>()
+    for ((k, v) in all) {
+        if (!k.startsWith("n:")) continue
+        val n = (v as? Number)?.toDouble() ?: continue
+        val sep = k.indexOf('|', 2)
+        if (sep <= 2) continue
+        val pkg = k.substring(2, sep)
+        val feat = k.substring(sep + 1)
+        out.getOrPut(pkg) { HashMap() }[feat] = n
+    }
+    return out
+}
+
+private fun readBanditStats(ctx: Context): Map<String, BanditStats> {
+    val all = ctx.getSharedPreferences(CONTEXT_PREFS, Context.MODE_PRIVATE).all
+    val imps = HashMap<String, Int>()
+    val taps = HashMap<String, Int>()
+    for ((k, v) in all) {
+        val n = v as? Int ?: continue
+        if (n <= 0) continue
+        when {
+            k.startsWith("bi:") -> imps[k.substring(3)] = n
+            k.startsWith("bt:") -> taps[k.substring(3)] = n
+        }
+    }
+    val pkgs = imps.keys + taps.keys
+    return pkgs.associateWith { p -> BanditStats(impressions = imps[p] ?: 0, taps = taps[p] ?: 0) }
 }
 
 private fun readNetworkProfiles(ctx: Context): Map<String, NetworkDwellProfile> {
@@ -1111,16 +1377,21 @@ fun byCount(counts: Map<String, Int>, self: String): List<String> =
  */
 fun contextualPackages(ctx: Context): ContextualRanking {
     val now = System.currentTimeMillis()
-    val usage = readUsageEvents(ctx, now)
+    val (usage, justUnlocked) = readUsageSnapshot(ctx, now)
     val events = if (!usage.isNullOrEmpty()) usage else readLocalHistory(ctx)
     val fallback = ctx.getSharedPreferences(COUNTS, Context.MODE_PRIVATE).all
         .mapNotNull { (k, v) -> (v as? Int)?.let { k to it } }
         .toMap()
     val contextCounts = readContextCounts(ctx)
-    val devCtx = readDeviceContext(ctx)
+    val devCtx = readDeviceContext(ctx).copy(justUnlocked = justUnlocked)
     val notifs = readActiveNotifSignals(ctx)
     val weights = readOnlineWeights(ctx)
     val fatigue = readFatigue(ctx)
+    val bandit = readBanditStats(ctx)
+    val installedPkgs = AppCache.apps.value.orEmpty()
+        .map { it.component.packageName }
+        .filter { !isInternal(it) }
+        .distinct()
     return rankContextualPackages(
         events = events,
         fallbackCounts = fallback,
@@ -1131,6 +1402,8 @@ fun contextualPackages(ctx: Context): ContextualRanking {
         selfPkg = ctx.packageName,
         onlineWeights = weights,
         fatigue = fatigue,
+        installedPackages = installedPkgs,
+        banditStats = bandit,
     )
 }
 

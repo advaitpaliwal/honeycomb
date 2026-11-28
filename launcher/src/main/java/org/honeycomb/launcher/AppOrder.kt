@@ -124,6 +124,21 @@ object AppOrder {
             }
         }
 
+        // 5. Controlled contextual bandit exploration (outermost unpinned slot only, never touching top/center slots)
+        val explorePkg = ranking.exploreCandidate
+        if (explorePkg != null) {
+            val outerSlot = slots.indices.lastOrNull { it !in pinnedIndices }
+            val exploreKey = installed.firstOrNull { pkgOf(it) == explorePkg && it !in hidden && slots.none { s -> s == it } }
+            if (outerSlot != null && outerSlot >= 5 && exploreKey != null) {
+                val topScore = ranking.scores.values.maxOrNull() ?: 0.0
+                val outerScore = slots[outerSlot]?.let { ranking.scores[pkgOf(it)] } ?: 0.0
+                // Only probe the outer slot when it isn't holding a high-urgency item (e.g. urgent notification / Live Activity)
+                if (topScore <= 0.0 || outerScore < topScore * 0.55) {
+                    slots[outerSlot] = exploreKey
+                }
+            }
+        }
+
         // Fallback if fewer than 7 non-hidden apps exist
         if (slots.any { it == null }) {
             val fallback = byUse(ranking.ordered, installed, label = label).filter { k -> k in hidden && slots.none { it == k } }.iterator()

@@ -383,4 +383,46 @@ class ContextualRankTest {
             ranked.ordered.first(),
         )
     }
+
+    @Test fun transitionEdgesAndFtrlOnlineLearningAdaptFastWhileBanditExploresOuterSlot() {
+        val now = 1_760_000_000_000L
+        val hpCtx = DeviceContext(
+            onWifi = false,
+            headphonesConnected = true,
+            btAudioId = "airpods_pro",
+            hpChangedAtMs = now - 2 * 60_000L, // just connected AirPods 2 min ago
+            justUnlocked = true,
+        )
+        val buckets = hpCtx.activeBuckets(now, utc)
+        assertTrue("Just-connected headphones must emit edge_hp_in", "edge_hp_in" in buckets)
+        assertTrue("Bluetooth audio fingerprint must emit bt_airpods_pro", "bt_airpods_pro" in buckets)
+        assertTrue("Fresh unlock must emit edge_unlock", "edge_unlock" in buckets)
+
+        val weights = HashMap<String, MutableMap<String, Double>>()
+        val accum = HashMap<String, MutableMap<String, Double>>()
+        repeat(3) {
+            updateOnlineWeights(weights, "com.podcasts.app", buckets, positive = true, gradAccum = accum, marginScale = 1.4)
+            updateOnlineWeights(weights, "com.other.app", buckets, positive = false, gradAccum = accum)
+        }
+        val installed = (1..10).map { "com.app.n$it" } + listOf("com.podcasts.app", "com.other.app", "com.fresh.explore")
+        val ranked = rankContextualPackages(
+            events = emptyList(),
+            fallbackCounts = (1..6).associate { "com.app.n$it" to (10 - it) } + mapOf("com.podcasts.app" to 4, "com.other.app" to 4),
+            contextCounts = emptyMap(),
+            nowMs = now,
+            ctx = hpCtx,
+            activeNotifications = emptyList(),
+            selfPkg = "org.honeycomb.launcher",
+            zoneId = utc,
+            onlineWeights = weights,
+            installedPackages = installed,
+            banditStats = (1..10).associate { "com.app.n$it" to BanditStats(impressions = 25, taps = 3) } +
+                mapOf("com.other.app" to BanditStats(impressions = 25, taps = 1)),
+        )
+        assertEquals("FTRL + transition edges should rank Podcasts #1 right after connecting AirPods", "com.podcasts.app", ranked.ordered.first())
+        assertTrue(
+            "Contextual bandit should pick an under-explored candidate outside top 6",
+            ranked.exploreCandidate != null && ranked.exploreCandidate !in ranked.ordered.take(6),
+        )
+    }
 }

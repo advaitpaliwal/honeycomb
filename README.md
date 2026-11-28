@@ -78,9 +78,33 @@ Honeycomb includes a built-in **Block** app right in your app grid (and in Contr
 ### Direct APK install & built-in updates
 1. On your phone, open the link above and tap `honeycomb-x.y.z.apk` under **Assets**.
 2. Open the downloaded file. If Android asks, allow your browser to install apps.
-3. Open Honeycomb. Setup asks to make it your home app, then walks you through the rest one screen at a time. Every step can be skipped.
-4. If notification or accessibility access is greyed out, Android is blocking it because the app came from a sideloaded APK. Setup sends you to App info, where you tap **⋮ › Allow restricted settings**.
-5. **Stay up to date in one tap:** Honeycomb checks GitHub Releases automatically (or anytime from **Control Centre › Settings › Updates**), verifies the release SHA-256 checksum, and hands the signed APK directly to Android's package installer.
+3. **Google Play Protect warning (expected for sideloaded APKs):** Tap **More details → Install anyway** (see visual guide below).
+4. Open Honeycomb. Setup asks to make it your home app, then walks you through the rest one screen at a time. Every step can be skipped.
+5. **Restricted settings (Android 13–16):** If Notification access or Accessibility (Block) is greyed out, tap **App info → ⋮ → Allow restricted settings** once (see visual guide below).
+6. **Stay up to date in one tap:** Honeycomb checks GitHub Releases automatically (or anytime from **Control Centre › Settings › Updates**), verifies the release SHA-256 checksum, and hands the signed APK directly to Android's package installer.
+
+### Google Play Protect & Restricted Settings (Why it appears & how to continue)
+
+> **Why does Google Play Protect say *"Unsafe app blocked"* or *"This app can request access to sensitive data"*?**
+> Per [Google's official Play Protect guidance](https://developers.google.com/android/play-protect/warning-dev-guidance), Android automatically flags **any** APK installed outside the Google Play Store (from a browser, file manager, or in-app updater) if it declares **`BIND_NOTIFICATION_LISTENER_SERVICE`** or **`BIND_ACCESSIBILITY_SERVICE`**.
+>
+> Honeycomb declares both transparently for its core features — **Notification Listener** powers Notification Centre, Now Playing, Live Updates, and notification importance ranking, and **Accessibility** powers optional local feed/website blocking (**Honeycomb Block**, off by default, `isAccessibilityTool="false"`).
+>
+> Honeycomb is **100% open source (Apache 2.0)**, built reproducibly and signed via GitHub Actions, with every release publishing a `.sha256` checksum that the built-in updater verifies before installing. (Installing via `adb install` skips the Play Protect dialog completely.)
+
+<div align="center">
+<img src="docs/images/play-protect-bypass.png" width="760" alt="Step-by-step guide: Tap More details, then Install anyway on the Google Play Protect dialog">
+<br><br>
+<img src="docs/images/restricted-settings.png" width="760" alt="Step-by-step guide: Open Honeycomb App info, tap the 3-dot menu, and tap Allow restricted settings">
+</div>
+
+### On-Device OS Intelligence (Dynamic Grid & Smart Stack)
+
+Honeycomb includes a zero-hardcoding, 100% on-device OS recommendation engine that learns which apps and Smart Stack widgets you need in the exact moment — with **zero GPS, zero cloud servers, and zero telemetry**:
+- **Unsupervised Wi-Fi dwell place inference:** Automatically distinguishes Home (overnight + charging dwell), Work (weekday daytime dwell), regular spots, transient Wi-Fi, and Away (cellular) purely from anonymized network fingerprints and stay duration.
+- **OS-level moment & transition signals:** Detects 15-minute hardware/place transitions (just plugged in headphones, just connected Bluetooth audio device fingerprint, wireless vs USB charger, just arrived/left Wi-Fi, just unlocked phone), screen brightness (dark room vs outdoors), upcoming alarm, Quiet mode, active media, and time/day/date cycles.
+- **Notification importance & ignored-chat suppression:** Uses Android's `NotificationListenerService.RankingMap` (importance, priority conversations, on-device user sentiment, direct replies, and unread `MessagingStyle` counts) paired with learned open-vs-ignore utility and skip-fatigue — urgent human conversations rise immediately while promos or noisy chats you routinely ignore stay out of your way.
+- **Real-time online learning & controlled exploration:** Combines dwell-weighted session bursts, multi-app workflow sequences, FTRL-Proximal adaptive online learning with pairwise AUC-PA updates, and subtle Thompson/UCB contextual bandit exploration in an outer slot to test under-explored apps and learn from your reactions without disturbing your top slots.
 
 ### Updates with Obtainium
 If you prefer managing sideloaded apps with [Obtainium](https://github.com/ImranR98/Obtainium), add `https://github.com/advaitpaliwal/honeycomb` to track releases there too.
@@ -97,10 +121,11 @@ Honeycomb is open source under Apache 2.0 with **no accounts, no tracking, and n
 | --- | --- |
 | Home app role | To be your home screen |
 | See all apps (`QUERY_ALL_PACKAGES`) | To list every app you can open |
+| Network state (`ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`) | Anonymized on-device Wi-Fi vs cellular context & dwell place inference (zero GPS/Location) |
 | Internet (`INTERNET`) | To check for and download updates from GitHub Releases |
 | Install packages (optional) | To install an update when you tap it |
-| Usage access (optional) | To rank your 7 most used apps (otherwise Honeycomb counts launches locally) |
-| Notification access (optional) | For Notification Centre, Now Playing, and live timers in the Smart Stack |
+| Usage access (optional) | To rank your 7 contextual apps & Smart Stack widgets (otherwise Honeycomb counts launches locally) |
+| Notification access (optional) | For Notification Centre, Now Playing, Live Updates, and notification importance ranking |
 | Do Not Disturb access (optional) | For the Quiet toggle in Control Centre |
 | Modify system settings (optional) | For the Brightness slider in Control Centre |
 | Accessibility, "Honeycomb Block" (optional, off by default) | To block short-form feeds (Reels, Shorts) and websites locally on-device |
