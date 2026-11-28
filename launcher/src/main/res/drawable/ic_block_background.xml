@@ -9,24 +9,11 @@
             <gradient
                 android:type="radial"
                 android:centerX="54"
-                android:centerY="28"
-                android:gradientRadius="84">
-                <item android:offset="0.0" android:color="#FF302B5C" />
-                <item android:offset="0.52" android:color="#FF16142B" />
-                <item android:offset="1.0" android:color="#FF090814" />
-            </gradient>
-        </aapt:attr>
-    </path>
-    <path android:pathData="M54,22a32,32 0,1 0,0.01 0z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="radial"
-                android:centerX="54"
-                android:centerY="54"
-                android:gradientRadius="32">
-                <item android:offset="0.0" android:color="#757C8CFF" />
-                <item android:offset="0.55" android:color="#295E5CE6" />
-                <item android:offset="1.0" android:color="#005E5CE6" />
+                android:centerY="26"
+                android:gradientRadius="82">
+                <item android:offset="0.0" android:color="#FF26262A" />
+                <item android:offset="0.55" android:color="#FF101013" />
+                <item android:offset="1.0" android:color="#FF050507" />
             </gradient>
         </aapt:attr>
     </path>
