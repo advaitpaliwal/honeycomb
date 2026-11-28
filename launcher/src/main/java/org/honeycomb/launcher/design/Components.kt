@@ -1,5 +1,6 @@
 package org.honeycomb.launcher.design
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -7,6 +8,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.composed
+import org.honeycomb.launcher.Motion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -88,6 +92,25 @@ private const val DISABLED_ALPHA = 0.3f
 @Suppress("UNUSED_PARAMETER")
 fun Modifier.surface(color: Color, shape: Shape, rim: Boolean = true): Modifier = this.clip(shape).background(color, shape)
 
+/** WWDC18 803 immediate tactile press response: compresses smoothly on finger-down and springs back on lift. */
+fun Modifier.fluidPress(
+    interaction: MutableInteractionSource,
+    pressedScale: Float = 0.93f,
+    enabled: Boolean = true,
+): Modifier = composed {
+    val pressed by interaction.collectIsPressedAsState()
+    val reduce = HoneycombTheme.reduceMotion
+    val scale by animateFloatAsState(
+        targetValue = if (enabled && pressed) pressedScale else 1f,
+        animationSpec = Motion.orSnap(reduce) { Motion.press.spec() },
+        label = "fluid-press",
+    )
+    graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+    }
+}
+
 /** A Control Centre tile's surface: [fill] in a [Radius.button] rounded rectangle; the battery status is a capsule. */
 fun Modifier.controlSurface(fill: Color, status: Boolean = false): Modifier =
     if (status) clip(Capsule).background(fill) else clip(rounded(Radius.button)).background(fill)
@@ -139,6 +162,7 @@ fun WatchButton(
     val ink = HoneycombColors.contentFor(fill)
     Box(
         modifier.sizeIn(minWidth = ControlSize.minHitArea, minHeight = ControlSize.minHitArea)
+            .fluidPress(interaction, pressedScale = 0.93f)
             .controlSurface(fill)
             .tap(on, onClick, onLongClick, interaction).semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
@@ -179,7 +203,7 @@ fun CircleButton(
     }
     val tap = if (on != null) Modifier.tap(on, onClick, onLongClick, interaction).semantics { this.contentDescription = contentDescription }
     else Modifier.tap(null, { if (enabled) onClick() }, onLongClick, interaction).action(contentDescription, enabled, onClick)
-    Box(modifier.sizeIn(minWidth = ControlSize.minHitArea, minHeight = ControlSize.minHitArea).then(tap), contentAlignment = Alignment.Center) {
+    Box(modifier.sizeIn(minWidth = ControlSize.minHitArea, minHeight = ControlSize.minHitArea).fluidPress(interaction, pressedScale = 0.90f, enabled = enabled).then(tap), contentAlignment = Alignment.Center) {
         Box(Modifier.size(size).surface(fill, Circle), contentAlignment = Alignment.Center) {
             Glyph(icon, HoneycombColors.contentFor(fill), size * GLYPH_FRACTION)
         }
@@ -219,7 +243,9 @@ fun CapsuleButton(
     if (onClick == null) { Box(modifier.heightIn(min = ControlSize.minHitArea).height(height)); return }
     val interaction = remember { MutableInteractionSource() }
     BoxWithConstraints(
-        modifier.sizeIn(minWidth = ControlSize.minHitArea, minHeight = ControlSize.minHitArea).tap(on, onClick, onLongClick, interaction),
+        modifier.sizeIn(minWidth = ControlSize.minHitArea, minHeight = ControlSize.minHitArea)
+            .fluidPress(interaction, pressedScale = 0.94f)
+            .tap(on, onClick, onLongClick, interaction),
         contentAlignment = Alignment.Center,
     ) {
         val width = if (constraints.hasFixedWidth) Modifier.fillMaxWidth() else Modifier.widthIn(min = minWidth)

@@ -38,9 +38,6 @@ class LauncherActivity : ComponentActivity() {
     private var homeDepth by mutableStateOf(Depth.Face)
     private var space by mutableStateOf(Space(depth = Depth.Face))
 
-    /** A finger-tracked swipe in progress: which, and how far (px along it). */
-    private var pull by mutableStateOf<Pair<Input, Float>?>(null)
-
     private var launched: ComponentName? = null
     private var editing by mutableStateOf(false)
     private var pickFor by mutableStateOf<Int?>(null)
@@ -215,8 +212,11 @@ class LauncherActivity : ComponentActivity() {
                     }
 
                     val s = space
+                    val depthController = remember { DepthController(space.depth) }
                     val rise = remember { RiseState() }
-                    val p = pull
+                    val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
+                    val notifSheet = remember { SheetController(screenH) }
+                    val controlSheet = remember { SheetController(screenH) }
                     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
                     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
                     LaunchedEffect(s.depth, s.edge) {
@@ -234,10 +234,11 @@ class LauncherActivity : ComponentActivity() {
                             } else Modifier)
                             .spaceInput(
                                 space = inputSpace,
-                                onInput = { pull = null; input(it) },
+                                onInput = { input(it) },
                                 onDrag = { i, px ->
-                                    val dragIntent = intentFor(space, i)
-                                    if (space.depth == Depth.Apps && (dragIntent == Intent.Out || dragIntent == Intent.Notifications || dragIntent == Intent.Control)) {
+                                    val cur = space
+                                    val dragIntent = intentFor(cur, i)
+                                    if (cur.depth == Depth.Apps && (dragIntent == Intent.Out || dragIntent == Intent.Notifications || dragIntent == Intent.Control)) {
                                         focusManager.clearFocus(force = true)
                                         keyboardController?.hide()
                                         hideKeyboard()
@@ -245,31 +246,51 @@ class LauncherActivity : ComponentActivity() {
                                     when (dragIntent) {
                                         Intent.RaiseStack -> rise.drag(px)
                                         Intent.LowerStack -> rise.drag(-px)
-                                        else -> pull = i to px
+                                        Intent.Notifications -> notifSheet.drag(px)
+                                        Intent.Control -> controlSheet.drag(px)
+                                        Intent.CloseEdge -> {
+                                            if (cur.edge == Edge.Notifications) notifSheet.drag(-px)
+                                            else if (cur.edge == Edge.Control) controlSheet.drag(-px)
+                                        }
+                                        Intent.In, Intent.Out -> {
+                                            val span = when {
+                                                i == Input.Right || i == Input.Left -> resources.displayMetrics.widthPixels * SideSwipe.TRAVEL
+                                                (i == Input.Up || i == Input.Down) && cur.depth == Depth.Favourites && cur.edge == null -> resources.displayMetrics.heightPixels * 0.35f
+                                                else -> 0f
+                                            }
+                                            if (span > 0f) {
+                                                val from = cur.depth.ordinal.toFloat()
+                                                val to = reduce(cur, dragIntent).depth.ordinal.toFloat()
+                                                if (to != from) depthController.drag((to - from) * (px / span))
+                                            }
+                                        }
+                                        else -> Unit
                                     }
                                 },
-                                onRelease = { i, velocity, ok ->
+                                onRelease = { i, velocity, _ ->
+                                    val cur = space
+                                    val dragIntent = intentFor(cur, i)
                                     if (rise.tracking) rise.release(if (i == Input.Up) velocity else -velocity)
-                                    if (!ok) pull = null
+                                    if (notifSheet.tracking) notifSheet.release(if (i == Input.Up) -velocity else velocity)
+                                    if (controlSheet.tracking) controlSheet.release(if (i == Input.Up) -velocity else velocity)
+                                    if (depthController.tracking) {
+                                        val span = when {
+                                            i == Input.Right || i == Input.Left -> resources.displayMetrics.widthPixels * SideSwipe.TRAVEL
+                                            else -> resources.displayMetrics.heightPixels * 0.35f
+                                        }.coerceAtLeast(1f)
+                                        val from = cur.depth.ordinal.toFloat()
+                                        val to = reduce(cur, dragIntent).depth.ordinal.toFloat()
+                                        val dir = if (to >= from) 1f else -1f
+                                        depthController.release(dir * velocity / span)
+                                    }
                                 },
                             ),
                     ) {
                         val wideGrid = expandedGridWindow()
                         DepthLayers(
                             depth = s.depth,
+                            controller = depthController,
                             fullWidthApps = wideGrid && grid && pickFor == null,
-                            seek = {
-                                pull?.let { (i, px) ->
-                                    val span = when {
-                                        i == Input.Right || i == Input.Left -> resources.displayMetrics.widthPixels * SideSwipe.TRAVEL
-                                        (i == Input.Up || i == Input.Down) && s.depth == Depth.Favourites && s.edge == null -> resources.displayMetrics.heightPixels * 0.35f
-                                        else -> return@let null
-                                    }
-                                    val from = s.depth.ordinal.toFloat()
-                                    val to = reduce(s, intentFor(s, i)).depth.ordinal.toFloat()
-                                    if (to == from) null else (from + (to - from) * (px / span).coerceIn(0f, 1f))
-                                }
-                            },
                             face = {
                                 Rise(
                                     raised = s.stack,
@@ -305,10 +326,16 @@ class LauncherActivity : ComponentActivity() {
                                 )
                             },
                             apps = {
-                                androidx.compose.animation.Crossfade(
+                                androidx.compose.animation.AnimatedContent(
                                     targetState = grid && pickFor == null,
                                     label = "all apps view",
-                                    animationSpec = androidx.compose.animation.core.tween(Motion.CHOICES_FADE_MS),
+                                    transitionSpec = {
+                                        val enter = androidx.compose.animation.fadeIn(Motion.tap.spec()) +
+                                            androidx.compose.animation.scaleIn(Motion.tap.spec(), initialScale = 0.96f)
+                                        val exit = androidx.compose.animation.fadeOut(Motion.tap.spec()) +
+                                            androidx.compose.animation.scaleOut(Motion.tap.spec(), targetScale = 0.96f)
+                                        androidx.compose.animation.ContentTransform(enter, exit)
+                                    },
                                 ) { showGrid ->
                                     if (showGrid) AppGridScreen(
                                         apps = all,
@@ -376,19 +403,10 @@ class LauncherActivity : ComponentActivity() {
                         )
 
                         Box(Modifier.align(Alignment.Center).width(FRAME_W.dp).fillMaxHeight()) {
-                            val sheetPull = p?.let { (i, px) ->
-                                when {
-                                    s.edge == null && i == Input.TopLeft -> px
-                                    s.edge == null && i == Input.TopRight -> px
-                                    s.edge != null && i == Input.Up -> -px
-                                    else -> null
-                                }
-                            }
-                            val pulling = if (s.edge == null) p?.first else null
-                            EdgeSheet(open = s.edge == Edge.Notifications, pull = sheetPull.takeIf { s.edge == Edge.Notifications || pulling == Input.TopLeft }) {
+                            EdgeSheet(open = s.edge == Edge.Notifications, controller = notifSheet) {
                                 NotificationCentre(onEnd = { end -> if (space.sheetEnd != end) space = space.copy(sheetEnd = end) })
                             }
-                            EdgeSheet(open = s.edge == Edge.Control, pull = sheetPull.takeIf { s.edge == Edge.Control || pulling == Input.TopRight }) {
+                            EdgeSheet(open = s.edge == Edge.Control, controller = controlSheet) {
                                 if (s.quiet) QuietScreen(onBack = { input(Input.Back) })
                                 else ControlCentre(
                                     onHoldQuiet = { input(Input.HoldQuiet) },
@@ -451,7 +469,6 @@ class LauncherActivity : ComponentActivity() {
         if (intent?.action != android.content.Intent.ACTION_MAIN || !intent.hasCategory(android.content.Intent.CATEGORY_HOME)) return
         val again = new && inFront && (intent.flags and android.content.Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT) == 0 &&
             !editing && pickFor == null
-        pull = null
         input(if (again) Input.HomeAgain else Input.Home)
     }
 

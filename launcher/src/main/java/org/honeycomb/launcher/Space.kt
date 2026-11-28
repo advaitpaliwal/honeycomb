@@ -164,6 +164,26 @@ object EdgeSwipe {
     fun opens(travel: Float, speed: Float, distance: Float, flickDistance: Float, flickSpeed: Float): Boolean =
         travel >= distance || (travel >= flickDistance && speed >= flickSpeed)
 
+    /**
+     * WWDC18 803 momentum-projected commit test: combines current [travel] with projected coasting distance
+     * from release [velocity] (px/s). Rewards light flicks while letting a mid-swipe reversal cancel naturally.
+     */
+    fun commits(
+        travel: Float,
+        velocity: Float,
+        span: Float,
+        minDistance: Float,
+        commitFraction: Float = 0.36f,
+        cancelSpeed: Float = minDistance * 6f,
+    ): Boolean {
+        if (span <= 0f) return travel >= minDistance
+        // Explicitly flicking back against the gesture always cancels (redirectable & forgiving).
+        if (velocity < -cancelSpeed) return false
+        val projected = travel + Motion.project(velocity, Motion.DECEL_FAST)
+        val threshold = minOf(span * commitFraction, maxOf(minDistance, span * 0.24f))
+        return projected >= threshold && travel >= minDistance * 0.25f
+    }
+
     /** A swipe down from the top edge: the right third pulls Control Centre, the rest Notification Centre. */
     fun fromTop(x: Float, width: Float): Input = if (x > width * 2f / 3f) Input.TopRight else Input.TopLeft
 }
@@ -228,36 +248,47 @@ fun Modifier.spaceInput(
             var d = Offset.Zero
             var taken: Input? = null
             var fired = false
-            while (true) {
-                val e = awaitPointerEvent(PointerEventPass.Initial)
-                val c = e.changes.firstOrNull { it.id == down.id } ?: break
-                if (DragOwners.activeDrag || DragOwners.editingLock) return@awaitEachGesture
-                tracker.addPosition(c.uptimeMillis, c.position)
-                d += c.positionChange()
-                if (taken == null && hypot(d.x, d.y) > viewConfiguration.touchSlop * 2f) {
-                    if (s.depth != Depth.Face && c.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) return@awaitEachGesture
-                    taken = armed.firstOrNull { travel(it, d) > 0 && abs(travel(it, d)) > abs(across(it, d)) }
-                    if (taken == null) return@awaitEachGesture
-                }
-                val t = taken
-                if (t != null) {
-                    e.changes.forEach { it.consume() }
-                    drag(t, travel(t, d))
-                    if (!fired && !tracks(s, t) && travel(t, d) >= EdgeSwipe.DISTANCE_DP * realDp) { fired = true; send(t) }
-                }
-                if (!c.pressed) {
-                    if (t != null && !fired) {
-                        val v = tracker.calculateVelocity().let { travel(t, Offset(it.x, it.y)) }
-                        val rise = rises(s, t)
-                        val ok = EdgeSwipe.opens(travel(t, d), v,
-                            (if (rise) EdgeSwipe.RISE_DISTANCE_DP else EdgeSwipe.DISTANCE_DP) * realDp,
-                            EdgeSwipe.FLICK_DISTANCE_DP * realDp,
-                            (if (rise) EdgeSwipe.RISE_FLICK_SPEED_DP else EdgeSwipe.FLICK_SPEED_DP) * realDp)
-                        release(t, v, ok)
-                        if (ok) send(t)
+            var released = false
+            try {
+                while (true) {
+                    val e = awaitPointerEvent(PointerEventPass.Initial)
+                    val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                    if (DragOwners.activeDrag || DragOwners.editingLock) break
+                    tracker.addPosition(c.uptimeMillis, c.position)
+                    d += c.positionChange()
+                    if (taken == null && hypot(d.x, d.y) > viewConfiguration.touchSlop) {
+                        if (s.depth != Depth.Face && c.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) break
+                        taken = armed.firstOrNull { travel(it, d) > 0 && abs(travel(it, d)) > abs(across(it, d)) }
+                        if (taken == null) break
                     }
-                    break
+                    val t = taken
+                    if (t != null) {
+                        e.changes.forEach { it.consume() }
+                        drag(t, travel(t, d))
+                        if (!fired && !tracks(s, t) && travel(t, d) >= EdgeSwipe.DISTANCE_DP * realDp) { fired = true; send(t) }
+                    }
+                    if (!c.pressed) {
+                        if (t != null && !fired) {
+                            val v = tracker.calculateVelocity().let { travel(t, Offset(it.x, it.y)) }
+                            val rise = rises(s, t)
+                            val span = gestureSpan(s, t, size)
+                            val minDist = (if (rise) EdgeSwipe.RISE_DISTANCE_DP else EdgeSwipe.DISTANCE_DP) * realDp
+                            val ok = EdgeSwipe.commits(
+                                travel = travel(t, d),
+                                velocity = v,
+                                span = span,
+                                minDistance = minDist,
+                            )
+                            released = true
+                            release(t, v, ok)
+                            if (ok) send(t)
+                        }
+                        break
+                    }
                 }
+            } finally {
+                val t = taken
+                if (t != null && !released) release(t, 0f, false)
             }
         }
     }
@@ -281,6 +312,13 @@ private fun travel(i: Input, d: Offset) = when (i) {
 private fun across(i: Input, d: Offset) = if (i == Input.Right || i == Input.Left) d.y else d.x
 
 private fun rises(s: Space, i: Input) = (i == Input.Up && s.depth == Depth.Face && !s.stack) || (i == Input.Down && s.stack)
+
+private fun gestureSpan(s: Space, i: Input, size: IntSize): Float = when {
+    i == Input.Right || i == Input.Left -> size.width * SideSwipe.TRAVEL
+    rises(s, i) -> size.height * Motion.STACK_TRAVEL
+    i == Input.TopLeft || i == Input.TopRight || (i == Input.Up && s.edge != null) -> size.height * 0.45f
+    else -> size.height * 0.35f
+}
 
 private fun tracks(s: Space, i: Input) = i == Input.Right || i == Input.Left || i == Input.TopLeft || i == Input.TopRight ||
     (i == Input.Up && (s.depth == Depth.Face || s.depth == Depth.Favourites)) || i == Input.Down

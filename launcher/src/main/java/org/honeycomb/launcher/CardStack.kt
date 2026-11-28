@@ -20,13 +20,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -130,7 +137,21 @@ fun CardStack(
     val p = remember { Animatable(if (expanded && count > 1) 1f else 0f) }
     val open = expanded && count > 1
     val reduce = HoneycombTheme.reduceMotion
-    LaunchedEffect(open) { p.animateTo(if (open) 1f else 0f, if (reduce) snap() else pileSpring()) }
+    val scope = rememberCoroutineScope()
+    var dragging by remember { mutableStateOf(false) }
+    var releaseVelocity by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(open, dragging) {
+        if (dragging) return@LaunchedEffect
+        val target = if (open) 1f else 0f
+        val v = releaseVelocity
+        releaseVelocity = 0f
+        if (reduce) {
+            p.snapTo(target)
+        } else {
+            val spec = if (v != 0f) Motion.gesture.spec<Float>() else pileSpring<Float>()
+            p.animateTo(target, spec, initialVelocity = v)
+        }
+    }
     if (hits) androidx.compose.runtime.DisposableEffect(tag) { onDispose { PileHits.rects.remove(tag) } }
     val headerDp = if (count > 1) ControlSize.regular else 0.dp
     androidx.compose.ui.layout.Layout(
@@ -140,24 +161,63 @@ fun CardStack(
             } else Modifier)
             .pointerInput(count, open) {
                 if (count < 2) return@pointerInput
-                // a drag down on the pile opens it; a drag up on the open header closes it; anything else is left to the page
+                val dragSpan = (minH.toPx() * 1.4f).coerceAtLeast(120f)
+                // WWDC18 803 continuous finger-tracked pile expansion/collapse with rubber-banding and momentum projection.
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    val tracker = VelocityTracker().apply { addPosition(down.uptimeMillis, down.position) }
                     var dy = 0f
-                    while (true) {
-                        val e = awaitPointerEvent(PointerEventPass.Initial)
-                        val c = e.changes.firstOrNull { it.id == down.id } ?: break
-                        if (c.isConsumed) break
-                        dy += c.position.y - c.previousPosition.y
-                        if (!open && dy > viewConfiguration.touchSlop * 2) { c.consume(); onExpanded(true); break }
-                        if (open && dy < -viewConfiguration.touchSlop * 2 && down.position.y < headerDp.toPx()) { c.consume(); onExpanded(false); break }
-                        if (!c.pressed) break
+                    var active = false
+                    var startP = p.value
+                    try {
+                        while (true) {
+                            val e = awaitPointerEvent(PointerEventPass.Initial)
+                            val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                            if (c.isConsumed && !active) break
+                            tracker.addPosition(c.uptimeMillis, c.position)
+                            dy += c.position.y - c.previousPosition.y
+                            if (!active) {
+                                val startOpen = !open && dy > viewConfiguration.touchSlop
+                                val startClose = open && dy < -viewConfiguration.touchSlop && down.position.y < headerDp.toPx() * 1.6f
+                                if (startOpen || startClose) {
+                                    active = true
+                                    dragging = true
+                                    startP = p.value
+                                }
+                            }
+                            if (active) {
+                                c.consume()
+                                val nextP = Motion.rubberBandClamp(startP + dy / dragSpan, 0f, 1f, stretch = 0.14f)
+                                scope.launch { p.snapTo(nextP) }
+                            }
+                            if (!c.pressed) {
+                                if (active) {
+                                    val vy = tracker.calculateVelocity().y
+                                    val dir = if (open) -1f else 1f
+                                    val committed = EdgeSwipe.commits(
+                                        travel = dy * dir,
+                                        velocity = vy * dir,
+                                        span = dragSpan,
+                                        minDistance = viewConfiguration.touchSlop * 2f,
+                                    )
+                                    releaseVelocity = (vy / dragSpan).coerceIn(-8f, 8f)
+                                    dragging = false
+                                    if (committed) onExpanded(!open)
+                                }
+                                break
+                            }
+                        }
+                    } finally {
+                        if (active && dragging) {
+                            releaseVelocity = 0f
+                            dragging = false
+                        }
                     }
                 }
             },
         content = {
             // the open header: the group's name, its actions and Show less, fading in as the pile opens
-            Row(Modifier.fillMaxWidth().graphicsLayer { alpha = p.value }, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().graphicsLayer { alpha = p.value.coerceIn(0f, 1f) }, verticalAlignment = Alignment.CenterVertically) {
                 if (count > 1) {
                     BasicText(title, Modifier.weight(1f).padding(start = Space.xs), HoneycombType.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (p.value > 0.01f) {
@@ -169,10 +229,10 @@ fun CardStack(
             }
             for (i in 0 until count) Box(Modifier.testTag("$tag-$i")) {
                 if (sliver != null && i > 0) {
-                    Box(Modifier.graphicsLayer { alpha = p.value }) { card(i) }
+                    Box(Modifier.graphicsLayer { alpha = p.value.coerceIn(0f, 1f) }) { card(i) }
                     // only the strip below the card in front shows, as on iOS: the front card's glass never shows a sliver through it
                     val under = remember(sliverH, peek, inset, corner) { UnderFront(inset, sliverH - peek, corner) }
-                    Box(Modifier.matchParentSize().graphicsLayer { alpha = 1f - p.value; clip = true; shape = under }) { sliver(i) }
+                    Box(Modifier.matchParentSize().graphicsLayer { alpha = (1f - p.value).coerceIn(0f, 1f); clip = true; shape = under }) { sliver(i) }
                 } else card(i)
                 // collapsed, a tap anywhere on the pile (the front card or a peek) opens it rather than one card
                 if (count > 1 && !open) Box(Modifier.matchParentSize()
@@ -182,19 +242,20 @@ fun CardStack(
         },
     ) { measurables, c ->
         val w = c.maxWidth
-        val pv = p.value
+        val pv = p.value.coerceIn(0f, 1.15f)
+        val pvUnit = pv.coerceIn(0f, 1f)
         val minPx = minH.roundToPx()
         val cards = measurables.drop(1)
         val hs = cards.map { it.maxIntrinsicHeight(w).coerceAtLeast(minPx).toFloat() }
-        val headerPx = headerDp.toPx() * pv
+        val headerPx = headerDp.toPx() * pvUnit
         val gapPx = gap.toPx()
         val head = measurables[0].measure(androidx.compose.ui.unit.Constraints.fixed(w, headerDp.roundToPx().coerceAtLeast(0)))
         val sliverPx = if (sliver != null) sliverH.toPx() else 0f
         val insetPx = if (sliver != null) inset.toPx() else 0f
-        val ws = cards.indices.map { i -> if (sliver != null) pileWidth(i, pv, w.toFloat(), insetPx, levels).roundToInt() else w }
-        val placed = cards.mapIndexed { i, m -> m.measure(androidx.compose.ui.unit.Constraints.fixed(ws[i], pileCardHeight(i, pv, hs, sliverPx).roundToInt().coerceAtLeast(0))) }
+        val ws = cards.indices.map { i -> if (sliver != null) pileWidth(i, pvUnit, w.toFloat(), insetPx, levels).roundToInt() else w }
+        val placed = cards.mapIndexed { i, m -> m.measure(androidx.compose.ui.unit.Constraints.fixed(ws[i], pileCardHeight(i, pvUnit, hs, sliverPx).roundToInt().coerceAtLeast(0))) }
         val peekPx = peek.toPx()
-        val total = pileHeight(pv, hs, gapPx, headerPx, peekPx, levels).roundToInt()
+        val total = pileHeight(pv, hs, gapPx, headerPx, peekPx, levels).roundToInt().coerceAtLeast(minPx)
         layout(w, total) {
             if (count > 1) head.place(0, 0)
             for (i in placed.indices.reversed()) {

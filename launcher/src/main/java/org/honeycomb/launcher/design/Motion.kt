@@ -105,6 +105,47 @@ object Motion {
     val bouncy = Spring(response = 0.5f, damping = 0.7f)
 
     /**
+     * WWDC18 803 purposeful damping:
+     *  - [tap]: critically damped (1.0) for discrete taps/buttons with no swipe momentum — fast, zero wobble.
+     *  - [gesture]: subtly underdamped (0.84) for swipe/flick releases — rewards finger momentum with a soft cushion.
+     *  - [press]: instant tactile touch-down response for controls and icons.
+     */
+    val tap = Spring(response = 0.34f, damping = 1.0f)
+    val gesture = Spring(response = 0.36f, damping = 0.84f)
+    val press = Spring(response = 0.22f, damping = 0.85f)
+
+    /** iOS UIScrollView deceleration rates (WWDC18 803 projection). */
+    const val DECEL_NORMAL = 0.998f
+    const val DECEL_FAST = 0.990f
+
+    /**
+     * WWDC18 803 momentum projection: distance an object coasts from [initialVelocity] (units/s) under scroll
+     * [decelerationRate], so a lightweight flick commits cleanly to its intended endpoint.
+     */
+    fun project(initialVelocity: Float, decelerationRate: Float = DECEL_FAST): Float {
+        if (initialVelocity == 0f || decelerationRate <= 0f || decelerationRate >= 1f) return 0f
+        return (initialVelocity / 1000f) * decelerationRate / (1f - decelerationRate)
+    }
+
+    /**
+     * Asymptotic rubber-band curve (WWDC18 803): softly cushions movement past a boundary without ever hitting a wall.
+     * Approaches ±[dimension] as [offset] grows.
+     */
+    fun rubberBand(offset: Float, dimension: Float, coeff: Float = 0.55f): Float {
+        if (dimension <= 0f || offset == 0f) return 0f
+        val sign = if (offset < 0f) -1f else 1f
+        val x = kotlin.math.abs(offset)
+        return sign * (1f - 1f / (x * coeff / dimension + 1f)) * dimension
+    }
+
+    /** Identity inside [min]..[max], soft rubber-band resistance beyond either boundary (asymptotic within [stretch]). */
+    fun rubberBandClamp(value: Float, min: Float, max: Float, stretch: Float): Float = when {
+        value < min -> min + rubberBand(value - min, stretch)
+        value > max -> max + rubberBand(value - max, stretch)
+        else -> value
+    }
+
+    /**
      * Reduce Motion, the one place Honeycomb reads it: Android's Remove animations (Accessibility) and an animator duration
      * scale of 0 (Developer options) both set Settings.Global.ANIMATOR_DURATION_SCALE to 0, and then every motion snaps.
      */

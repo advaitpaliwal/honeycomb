@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -379,9 +380,14 @@ fun WatchGrid(
                             val appKey = cell.appKey
                             ReorderableItem(reorderableState, key = appKey) { isDragging ->
                                 val interactionSource = remember { MutableInteractionSource() }
+                                val isPressed by interactionSource.collectIsPressedAsState()
                                 val scale by animateFloatAsState(
-                                    targetValue = if (isDragging) 1.14f else 1f,
-                                    animationSpec = PICKUP_SCALE_SPRING,
+                                    targetValue = when {
+                                        isDragging -> 1.14f
+                                        isPressed && !editing -> 0.90f
+                                        else -> 1f
+                                    },
+                                    animationSpec = if (isDragging) PICKUP_SCALE_SPRING else Motion.press.spec(),
                                     label = "grid-item-scale",
                                 )
                                 val jiggleRot = rememberGentleJiggle(editing && !isDragging, appKey.hashCode())
@@ -519,8 +525,13 @@ fun WatchGrid(
 @Composable
 fun ViewSwitchButton(showingGrid: Boolean, onSwitch: () -> Unit, modifier: Modifier = Modifier) {
     val label = if (showingGrid) "List View" else "Grid View"
+    val view = LocalView.current
     CapsuleButton(
-        label, onSwitch,
+        label,
+        {
+            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            onSwitch()
+        },
         modifier.testTag(if (showingGrid) "list-view" else "grid-view")
             .semantics { contentDescription = label },
         icon = if (showingGrid) Symbols.list else Symbols.apps,
