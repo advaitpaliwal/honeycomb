@@ -365,6 +365,7 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
     val ctx = LocalContext.current
     val view = LocalView.current
     var brightness by remember { mutableStateOf(Levels.brightness(ctx)) }
+    var showBrightnessSheet by remember { mutableStateOf(false) }
     var lastBrightnessAskMs by remember { mutableStateOf(0L) }
     var activeIds by remember { mutableStateOf(ControlPrefs.load(ctx)) }
     var editing by remember { mutableStateOf(false) }
@@ -401,8 +402,8 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
         }
         Box(Modifier.fillMaxSize()) {
             val pt = 1.wp
-            val gapX = pt * ControlGrid.GAP_X + 4.dp
-            val gapY = pt * ControlGrid.GAP_Y + 4.dp
+            val gapX = pt * ControlGrid.GAP_X
+            val gapY = pt * ControlGrid.GAP_Y
             val btnH = pt * ControlGrid.BUTTON_H
             val sidePad = pt * ControlGrid.SIDE
             val updateState by AppUpdater.state.collectAsState()
@@ -425,68 +426,39 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(gapX),
                 verticalArrangement = Arrangement.spacedBy(gapY),
             ) {
-                // Header: either watchOS Edit bar (+ / Done) or compact status capsule + full-bleed Brightness capsule
-                item(key = "cc-header", span = { GridItemSpan(ControlGrid.COLS) }) {
-                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        if (editing) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                CircleButton(
-                                    icon = Symbols.add,
-                                    contentDescription = "Add control",
-                                    onClick = { showAddSheet = true },
-                                    modifier = Modifier.testTag("control-add"),
-                                    size = 40.dp,
-                                )
-                                CapsuleButton(
-                                    text = "Done",
-                                    onClick = {
-                                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                                        editing = false
-                                    },
-                                    modifier = Modifier.testTag("control-done"),
-                                    filled = true,
-                                    height = 40.dp,
-                                    minWidth = 96.dp,
-                                )
-                            }
-                        } else {
-                            if (now.charging || now.quiet) {
+                // Header: watchOS Edit bar (+ / Done) in Edit mode, or compact status capsule only (pure watchOS, no top slider)
+                if (editing || now.charging || now.quiet) {
+                    item(key = "cc-header", span = { GridItemSpan(ControlGrid.COLS) }) {
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            if (editing) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    CircleButton(
+                                        icon = Symbols.add,
+                                        contentDescription = "Add control",
+                                        onClick = { showAddSheet = true },
+                                        modifier = Modifier.testTag("control-add"),
+                                        size = 40.dp,
+                                    )
+                                    CapsuleButton(
+                                        text = "Done",
+                                        onClick = {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                            editing = false
+                                        },
+                                        modifier = Modifier.testTag("control-done"),
+                                        filled = true,
+                                        height = 40.dp,
+                                        minWidth = 96.dp,
+                                    )
+                                }
+                            } else {
                                 BatteryCapsule(now, pt)
-                                Spacer(Modifier.height(14.dp))
+                                Spacer(Modifier.height(6.dp))
                             }
-                            val sliderH = btnH * 0.72f
-                            ControlCapsuleSlider(
-                                value = brightness,
-                                onValueChange = { next ->
-                                    brightness = next
-                                    if (Levels.canWriteBrightness(ctx)) {
-                                        Levels.setBrightness(ctx, next)
-                                    } else {
-                                        val nowMs = android.os.SystemClock.uptimeMillis()
-                                        if (nowMs - lastBrightnessAskMs > 1500L) {
-                                            lastBrightnessAskMs = nowMs
-                                            Device.launch(
-                                                ctx,
-                                                Intent(
-                                                    Settings.ACTION_MANAGE_WRITE_SETTINGS,
-                                                    android.net.Uri.fromParts("package", ctx.packageName, null),
-                                                ),
-                                            )
-                                        }
-                                    }
-                                },
-                                icon = Symbols.sun,
-                                contentDescription = "Brightness",
-                                height = sliderH,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .onGloballyPositioned { c -> DragOwners.set("brightness-slider", c.boundsInRoot()) }
-                                    .testTag("brightness-slider"),
-                            )
                         }
                     }
                 }
@@ -535,6 +507,10 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                                     .then(dragMod),
                                 pt = pt,
                                 onHoldQuiet = { if (!editing) onHoldQuiet() },
+                                onOpenBrightness = {
+                                    brightness = Levels.brightness(ctx)
+                                    showBrightnessSheet = true
+                                },
                                 act = ::act,
                             )
                             if (editing && activeIds.size > 1) {
@@ -597,6 +573,43 @@ fun ControlCentre(onHoldQuiet: () -> Unit, onEnd: (Boolean) -> Unit) {
                                 height = 40.dp,
                             )
                         }
+                    }
+                }
+            }
+
+            if (showBrightnessSheet) {
+                BottomSheet(onDismiss = { showBrightnessSheet = false }) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        BasicText("Brightness", style = HoneycombType.title)
+                        ControlCapsuleSlider(
+                            value = brightness,
+                            onValueChange = { next ->
+                                brightness = next
+                                if (Levels.canWriteBrightness(ctx)) {
+                                    Levels.setBrightness(ctx, next)
+                                } else {
+                                    val nowMs = android.os.SystemClock.uptimeMillis()
+                                    if (nowMs - lastBrightnessAskMs > 1500L) {
+                                        lastBrightnessAskMs = nowMs
+                                        Device.launch(
+                                            ctx,
+                                            Intent(
+                                                Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                                android.net.Uri.fromParts("package", ctx.packageName, null),
+                                            ),
+                                        )
+                                    }
+                                }
+                            },
+                            icon = Symbols.sun,
+                            contentDescription = "Brightness",
+                            height = 56.dp,
+                            modifier = Modifier.fillMaxWidth().testTag("brightness-slider"),
+                        )
+                        Spacer(Modifier.height(scrollBottomInset + 8.dp))
                     }
                 }
             }
@@ -679,7 +692,15 @@ private fun BatteryCapsule(t: Toggles, pt: androidx.compose.ui.unit.Dp) {
 
 /** One control: a glyph-only WatchButton, its tint filling it when on. */
 @Composable
-private fun Control(id: String, t: Toggles, m: Modifier, pt: androidx.compose.ui.unit.Dp, onHoldQuiet: () -> Unit, act: (() -> Unit) -> () -> Unit) {
+private fun Control(
+    id: String,
+    t: Toggles,
+    m: Modifier,
+    pt: androidx.compose.ui.unit.Dp,
+    onHoldQuiet: () -> Unit,
+    onOpenBrightness: () -> Unit,
+    act: (() -> Unit) -> () -> Unit,
+) {
     val ctx = LocalContext.current
     when (id) {
         "bluetooth" -> WatchButton(Symbols.bluetooth, said("Bluetooth", t.bluetooth), act { Device.open(ctx, Settings.ACTION_BLUETOOTH_SETTINGS) },
@@ -707,7 +728,7 @@ private fun Control(id: String, t: Toggles, m: Modifier, pt: androidx.compose.ui
             m.testTag("tile-rotation"), on = t.rotationLock)
         "volume" -> WatchButton(Symbols.volume, "Volume", act { Device.openVolume(ctx) }, m.testTag("tile-volume"))
         "output" -> WatchButton(Symbols.output, "Audio output", act { openOutput(ctx) }, m.testTag("tile-output"))
-        "brightness" -> WatchButton(Symbols.sun, "Brightness", act { Levels.openBrightness(ctx) }, m.testTag("tile-brightness"))
+        "brightness" -> WatchButton(Symbols.sun, "Brightness", act { onOpenBrightness() }, m.testTag("tile-brightness"))
         "timer" -> WatchButton(Symbols.timer, "Timer", act { Device.openTimer(ctx) }, m.testTag("tile-timer"))
         "calculator" -> WatchButton(Symbols.calculator, "Calculator", act { Device.openCalculator(ctx) }, m.testTag("tile-calculator"))
         "camera" -> WatchButton(Symbols.camera, "Camera", act { Device.openCamera(ctx) }, m.testTag("tile-camera"))
